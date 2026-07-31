@@ -480,6 +480,32 @@ function ok(name, cond, extra) {
     `1 бар ${one}, 10 баров ${g.bizIncome(b)}`);
 }
 
+// ---------- строка казны: доход и расход порознь, итог отдельно ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  g.money = 1234.7;
+  g.units.length = 0;
+  g.spawnUnit("sniper", g.playerHQ().x, g.playerHQ().y, "player");   // −$3/с при доходе $10/с
+  g.update(0.001);
+  ok("строка казны: счёт округляется вниз", g.els.uiMoney.textContent === "$1234", g.els.uiMoney.textContent);
+  ok("строка казны: доход — валовой, а не разница",
+    g.els.uiInc.textContent === "+$" + g.fInc.player, g.els.uiInc.textContent);
+  ok("строка казны: расход отдельной цифрой",
+    g.els.uiUp.textContent === "−$" + g.fUp.player && g.fUp.player > 0, g.els.uiUp.textContent);
+  ok("строка казны: бойцы посчитаны", g.els.uiArmy.textContent === "1", g.els.uiArmy.textContent);
+  const net = g.fInc.player - g.fUp.player;
+  ok("строка казны: итог сходится с доходом минус расход",
+    g.els.uiNet.textContent === (net >= 0 ? "+$" : "−$") + Math.abs(net) && net > 0, g.els.uiNet.textContent);
+  ok("строка казны: плюсовой итог зелёный", /green/.test(g.els.uiNet.style.color), g.els.uiNet.style.color);
+  // уходим в минус: содержание отряда больше дохода одного штаба
+  for (let i = 0; i < 6; i++) g.spawnUnit("undertaker", g.playerHQ().x, g.playerHQ().y, "player");
+  g.update(0.001);
+  ok("строка казны: минусовой итог красный и со знаком",
+    g.els.uiNet.textContent[0] === "−" && /red/.test(g.els.uiNet.style.color),
+    g.els.uiNet.textContent + " / " + g.els.uiNet.style.color);
+}
+
 // ---------- улучшенная точка: берётся дольше и достаётся захватчику ----------
 {
   function grabTime(kind, raze) {
@@ -662,12 +688,13 @@ function ok(name, cond, extra) {
   mine.owner = "player";
   g.selBiz = mine; g.update(0.001);
   ok("панель: своя точка включает кнопки", g.els.buyUpBar.disabled === false);
-  ok("панель: рынок показывает свою долю и размер",
-    /Бар: <b[^>]*>0%<\/b> · рынок 10/.test(g.els.market.innerHTML), g.els.market.innerHTML);
+  // Рынок переехал из правого меню в строку казны сверху, но остаётся тем же #market
+  ok("строка казны: рынок показывает свою долю и размер",
+    /Бар<\/div><div class="v">0%<small>0 из 10</.test(g.els.market.innerHTML), g.els.market.innerHTML);
   g.playerUpgrade("strip"); g.update(0.001);
   ok("панель: после улучшения кнопки гаснут", g.els.buyUpBar.disabled === true && mine.kind === "strip");
-  ok("панель: доля в целых процентах",
-    /Стриптиз: <b[^>]*>10%<\/b> · рынок 10/.test(g.els.market.innerHTML), g.els.market.innerHTML);
+  ok("строка казны: доля в целых процентах",
+    /Стриптиз<\/div><div class="v">10%<small>1 из 10</.test(g.els.market.innerHTML), g.els.market.innerHTML);
   // Снос и улучшение — взаимно исключающие кнопки: включена всегда ровно одна сторона
   ok("панель: после улучшения снос включён и назван",
     g.els.btnDemolish.disabled === false && g.els.costDemolish.textContent === g.UPGRADES.strip.short,
@@ -733,7 +760,7 @@ function ok(name, cond, extra) {
 // к выбранной точке. Значит, проверять надо не только состояние кнопок, но и место.
 {
   const g = loadGame();
-  g.reset(1);
+  g.reset(1, 4242);          // сид, а не случайная карта: место панели считается от точек карты
   g.money = 5000; g.update(0.001);
   const panel = g.els.bizPanel;
   ok("панелька: без выбора её нет вовсе", panel.style.display === "none");
@@ -764,11 +791,20 @@ function ok(name, cond, extra) {
   const s2 = g.w2s(mine.x, mine.y);
   ok("панелька: держится точки и на зуме",
     Math.abs(parseFloat(panel.style.left) - (s2.x + g.TILE / 2 * 1.5 + 12)) < 2, panel.style.left);
-  // у правого края панель уходит на другую сторону: накрывать собой саму точку ей нельзя
-  g.cam.zoom = 1; g.cam.x = mine.x - 1150; g.cam.y = mine.y - 400; g.update(0.001);
-  const s3 = g.w2s(mine.x, mine.y);
+  // У правого края панель уходит на другую сторону: накрывать собой саму точку ей нельзя.
+  // Центральную точку сюда брать нельзя: на маленькой карте камера упирается в clampCam
+  // раньше, чем точка доедет до правого края экрана, и проверка мерила бы зажим камеры,
+  // а не панель. Берём самую правую точку — до её края камера доходит с запасом.
+  let edge = null;
+  for (const b of g.businesses) if (!b.hq && (!edge || b.x > edge.x)) edge = b;
+  edge.owner = "player";
+  g.cam.zoom = 1; g.cam.x = edge.x - 1100; g.cam.y = edge.y - 400;   // точка у правого края 1200px
+  g.setSelBiz(edge); g.update(0.001);
+  const s3 = g.w2s(edge.x, edge.y);
   ok("панелька: у правого края уходит влево от точки",
+    Math.abs(s3.x - 1100) < 1 &&                                     // камера не упёрлась в зажим
     parseFloat(panel.style.left) + g.BIZ_PANEL_W <= s3.x - g.TILE / 2, `${panel.style.left} при x=${s3.x}`);
+  g.setSelBiz(mine);
   // миникарта — тоже интерфейс: под панелью она бы не кликалась
   g.cam.x = mine.x - 60; g.cam.y = mine.y - 740; g.update(0.001);   // точка в левом нижнем углу
   const mm = g.mmRect();
