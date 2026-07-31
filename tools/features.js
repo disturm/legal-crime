@@ -377,8 +377,8 @@ function ok(name, cond, extra) {
   ok("рынок больше пола меряется числом заведений", g.marketSize("bar") === 12);
   ok("доля округляется до целых процентов", g.marketPct("player", "bar") === 42,
     `доля ${g.marketPct("player", "bar")}%`);                       // 5/12 = 41.67
-  ok("доход бара по формуле X*(1+Y*доля)", g.bizIncomeOf("player", pool[0]) === 22,
-    `${g.bizIncomeOf("player", pool[0])} вместо 22`);               // 12*(1+2*0.42)
+  ok("доход бара по формуле X*(1+Y*доля)", g.bizIncomeOf("player", pool[0]) === 44,
+    `${g.bizIncomeOf("player", pool[0])} вместо 44`);               // 24*(1+2*0.42)
   pool[0].kind = "fixer";
   ok("решение проблем не зависит от рынка", g.bizIncomeOf("player", pool[0]) === g.UPGRADES.fixer.X);
   pool[0].kind = "bar";
@@ -475,6 +475,138 @@ function ok(name, cond, extra) {
     `1 бар ${one}, 10 баров ${g.bizIncome(b)}`);
 }
 
+// ---------- цены классов выведены из содержания: минута upkeep = цена найма ----------
+// Правило важнее конкретных чисел: армия — это расход, а не имущество, и именно оно
+// не даёт «накопить кучу и разбить всё». Проверяем по TYPES, а не поимённо.
+{
+  const g = loadGame();
+  g.reset(1);
+  const all = Object.keys(g.TYPES);
+  ok("минута содержания стоит ровно как найм",
+    all.every(t => g.TYPES[t].cost === g.TYPES[t].up * 60),
+    all.map(t => `${t}: $${g.TYPES[t].cost} против $${g.TYPES[t].up}*60`).join(", "));
+  ok("взятка — цена найма, у гробовщика двойная",
+    g.TYPES.bouncer.bribe === 0 &&
+    ["shooter", "sniper"].every(t => g.TYPES[t].bribe === g.TYPES[t].cost) &&
+    g.TYPES.undertaker.bribe === g.TYPES.undertaker.cost * 2,
+    all.map(t => `${t}: взятка $${g.TYPES[t].bribe} при найме $${g.TYPES[t].cost}`).join(", "));
+  // Заведение обязано окупать бойцов: иначе экономика не догоняет содержание
+  // и партия вырождается в два маленьких отряда у своих штабов.
+  ok("лучшее улучшение содержит хотя бы стрелка",
+    Math.max(...g.UP_KEYS.map(k => g.UPGRADES[k].X)) > g.TYPES.shooter.up,
+    g.UP_KEYS.map(k => `${k} X=${g.UPGRADES[k].X}`).join(", ") + `, стрелок $${g.TYPES.shooter.up}/с`);
+}
+
+// ---------- вышибала — инструмент захвата, а не боец ----------
+// Замысел держится не словами, а числами: он обязан проигрывать за те же деньги.
+{
+  const g = loadGame();
+  g.reset(1);
+  const T = g.TYPES;
+  const dps = t => T[t].dmg / T[t].rate;
+  // Боевая ценность по Ланчестеру: урон в секунду на живучесть. За доллар и за доллар
+  // содержания вышибала обязан быть хуже стрелка — иначе «много вышибал» станет выигрышем.
+  const power = t => dps(t) * T[t].hp;
+  ok("здоровья у вышибалы как у стрелка", T.bouncer.hp === T.shooter.hp,
+    `${T.bouncer.hp} против ${T.shooter.hp}`);
+  ok("урон вышибалы заметно ниже, чем у стрелка", dps("bouncer") < dps("shooter") / 2,
+    `${dps("bouncer").toFixed(1)} против ${dps("shooter").toFixed(1)} урона/с`);
+  ok("на равные деньги толпа вышибал проигрывает стрелкам",
+    power("bouncer") / T.bouncer.cost < power("shooter") / T.shooter.cost,
+    `${(power("bouncer") / T.bouncer.cost).toFixed(1)} против ${(power("shooter") / T.shooter.cost).toFixed(1)} на доллар найма`);
+  ok("и на равное содержание — тоже",
+    power("bouncer") / T.bouncer.up < power("shooter") / T.shooter.up,
+    `${Math.round(power("bouncer") / T.bouncer.up)} против ${Math.round(power("shooter") / T.shooter.up)} на доллар в секунду`);
+  ok("но телом он остаётся самым дешёвым",
+    Object.keys(T).every(t => t === "bouncer" || T.bouncer.cost < T[t].cost));
+
+  // ИИ обязан это понимать: вышибала — не то, что берут «когда не хватило на бойца».
+  const me = "ai1";
+  g.units.filter(u => u.team === me).forEach(u => { u.hp = 0; });
+  const sp = g.captureSpots(g.factionHQ(me))[0];
+  for (let i = 0; i < 4; i++) g.spawnUnit("bouncer", sp.x, sp.y, me);
+  g.funds[me] = 100000;
+  ok("доля вышибал считается по живым", Math.round(g.bouncerShare(me) * 100) === 100,
+    `${Math.round(g.bouncerShare(me) * 100)}%`);
+  g.unlocks[me].shooter = true;
+  const picks = new Set();
+  for (let i = 0; i < 60; i++) picks.add(g.aiPickHire(me));
+  ok("выбрав долю, ИИ копит на бойца, а не берёт ещё вышибалу",
+    !picks.has("bouncer") && picks.has("shooter"), "выбирал: " + [...picks].join(", "));
+  for (let i = 0; i < 9; i++) g.spawnUnit("shooter", sp.x, sp.y, me);
+  const many = new Set();
+  for (let i = 0; i < 60; i++) many.add(g.aiPickHire(me));
+  ok("под своей долей вышибала снова нанимается", many.has("bouncer"),
+    `доля ${Math.round(g.bouncerShare(me) * 100)}%, выбирал: ` + [...many].join(", "));
+
+  // Первые тела доля не ограничивает: иначе фракция со стартовыми двумя бойцами
+  // (один из них вышибала — уже 50%) не смогла бы взять ни одной нейтралки.
+  g.units.filter(u => u.team === me).forEach(u => { u.hp = 0; });
+  g.spawnUnit("bouncer", sp.x, sp.y, me);
+  const first = new Set();
+  for (let i = 0; i < 20; i++) first.add(g.aiPickHire(me));
+  ok("первые тела берутся и сверх доли", g.BOUNCER_MIN > 1 && first.has("bouncer"),
+    `порог ${g.BOUNCER_MIN}, при одном вышибале выбирал: ` + [...first].join(", "));
+}
+
+// ---------- подкрепления ИИ оплачиваются из кассы, лимита по территории больше нет ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  g.businesses.filter(b => b.owner === "neutral").slice(0, 6).forEach(b => { b.owner = "ai1"; });
+  g.tickEconomy(0.001);                       // посчитать доход и расход фракции
+  // кассы хватает на бойцов, но не на улучшение (иначе aiUpgrade съест её первым)
+  g.funds.ai1 = g.UPGRADES.strip.cost + g.AI_UP_RESERVE - 1;
+  const cash = g.funds.ai1;
+  const before = g.units.filter(u => u.team === "ai1").map(u => u.id);
+  g.enemyAI(30);                              // таймер волны прошёл
+  const fresh = g.units.filter(u => u.team === "ai1" && !before.includes(u.id));
+  const paid = fresh.reduce((s, u) => s + g.TYPES[u.type].cost, 0);
+  ok("волна подкреплений оплачена из кассы фракции",
+    fresh.length > 0 && Math.round(g.funds.ai1) === cash - paid,
+    `бойцов ${fresh.length} на $${paid}, касса ${cash} → ${Math.round(g.funds.ai1)}`);
+
+  g.funds.ai1 = 0;                            // денег нет — подкреплений нет
+  const n = g.units.filter(u => u.team === "ai1").length;
+  g.enemyAI(30);
+  ok("без денег волна не приходит", g.units.filter(u => u.team === "ai1").length === n,
+    `было ${n}, стало ${g.units.filter(u => u.team === "ai1").length}`);
+
+  // Ворота найма — поток, а не касса: содержание не должно съесть долю дохода.
+  g.fUp.ai1 = g.fInc.ai1 * g.UPKEEP_SHARE + 1;
+  ok("при съеденной доле дохода ИИ не нанимает", !g.aiCanHire("ai1"),
+    `расход ${Math.round(g.fUp.ai1)} при доходе ${g.fInc.ai1}`);
+  g.fUp.ai1 = 0;
+  ok("с запасом дохода ИИ нанимает", g.aiCanHire("ai1"));
+  // Ворота классов у ИИ прежние — территориальные (AI_BRIBE), деньгами их не обойти.
+  g.funds.ai1 = 100000;
+  const hired = new Set();
+  for (let i = 0; i < 60; i++) { const t = g.aiPickHire("ai1"); if (t) hired.add(t); }
+  ok("класс, ещё не открытый территорией, за деньги не нанимается",
+    !g.unlocks.ai1.undertaker && !hired.has("undertaker"),
+    "нанимал: " + [...hired].join(", "));
+}
+
+// ---------- армию ИИ держат деньги, а не число занятых точек ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  const hq = g.factionHQ("ai1");
+  hq.income = 200;                            // одна точка, но богатая
+  // Боевой класс открыт: армию из одних вышибал доктрина найма не даст собрать и с кассой,
+  // а мерить мы здесь хотим именно отсутствие территориального лимита.
+  g.unlocks.ai1.shooter = true;
+  g.tickEconomy(0.001);
+  g.funds.ai1 = 100000;
+  for (let i = 0; i < 5; i++) g.enemyAI(30);  // пять волн подряд
+  const atk = g.units.filter(u => u.team === "ai1" && u.role === "attacker").length;
+  // Прежний потолок был 3+1.1*территория, то есть 4 бойца на одну точку. Теперь его нет.
+  ok("одна точка не ограничивает армию, если касса тянет", atk > 4,
+    `штурмовиков ${atk} при одной точке`);
+  ok("волна выводит не больше WAVE_MAX за раз", atk <= 5 * g.WAVE_MAX,
+    `штурмовиков ${atk} за 5 волн при WAVE_MAX=${g.WAVE_MAX}`);
+}
+
 // ---------- улучшенная точка: берётся дольше и достаётся захватчику ----------
 {
   function grabTime(kind, raze) {
@@ -522,7 +654,7 @@ function ok(name, cond, extra) {
 
 // ---------- ИИ перестраивает только когда строить негде ----------
 {
-  // Два стриптиза при доле 20% дают по $12; решение проблем — $18, то есть перевес
+  // Два стриптиза при доле 20% дают по $24; решение проблем — $36, то есть перевес
   // ×1.5 при пороге AI_SWAP_GAIN. Считаем на явных цифрах, а не на «примерно лучше».
   function world() {
     const g = loadGame();
@@ -539,7 +671,7 @@ function ok(name, cond, extra) {
   g.businesses.forEach(b => { if (b.owner === "ai1" && !b.hq && !b.kind) b.owner = "neutral"; });
   const worth = g.bizIncomeOf("ai1", g.businesses.find(b => b.kind === "strip"));
   ok("порог перестройки посчитан на живых числах",
-    worth === 12 && g.upIncomeAt("ai1", "fixer", 1) === 18 && 18 >= worth * g.AI_SWAP_GAIN,
+    worth === 24 && g.upIncomeAt("ai1", "fixer", 1) === 36 && 36 >= worth * g.AI_SWAP_GAIN,
     `стриптиз ${worth}, решала ${g.upIncomeAt("ai1", "fixer", 1)}, порог ×${g.AI_SWAP_GAIN}`);
   g.aiUpgrade("ai1");
   ok("ИИ сносит слабое заведение, когда строить негде",
