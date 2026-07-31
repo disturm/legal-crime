@@ -1,5 +1,5 @@
 // Прогон партий ботом — проверка баланса и того, что игра вообще проходима.
-//   node tools/sim.js <mode> [N] [ИИ] [сид|rnd]
+//   node tools/sim.js <mode> [N] [ИИ] [сид|rnd] [размер карты: small|normal|large]
 //   mode: mass — разводит бойцов по разным целям и держит охрану штаба
 //                (основной сценарий «нормальной игры»: точку тянет один сильнейший,
 //                 поэтому копить толпу под одну цель больше не имеет смысла)
@@ -65,8 +65,8 @@ function walkDist(g, d, b, fx, fy) {
   return best === Infinity ? 1e6 + Math.hypot(b.x - fx, b.y - fy) : best;
 }
 
-function play(g, mode, aiCount, seed) {
-  g.reset(aiCount, seed);                    // новый мир с нужным числом ИИ-противников
+function play(g, mode, aiCount, seed, size) {
+  g.reset(aiCount, seed, size);              // новый мир с нужным числом ИИ и размером карты
   let t = 0, peakEnemy = 0;
   // Как и ИИ, бот специализируется на одном типе рынка: доля растёт только у того,
   // кто держит фокус, а голая жадность по «доход на доллар» сводит все партии к стриптизу.
@@ -191,10 +191,14 @@ const N = +(process.argv[3] || 20);
 const aiCount = +(process.argv[4] || 2);        // число ИИ-противников (1..3)
 const seedArg = process.argv[5] || "12345";     // база сида карт; `rnd` — случайные карты
 const base = seedArg === "rnd" ? null : (+seedArg >>> 0) || 12345;
+// Размер карты — такой же рычаг сложности, как число ИИ: меньше карта — меньше точек,
+// а армия игрока упирается только в деньги. Сравнивать столбцы можно лишь при одном размере.
+const size = process.argv[6];
 const rows = [];
 for (let n = 0; n < N; n++)
-  rows.push(play(loadGame(), mode, aiCount, base === null ? undefined : base + n * 7919));
+  rows.push(play(loadGame(), mode, aiCount, base === null ? undefined : base + n * 7919, size));
 console.log(`${mode.toUpperCase()} — ${N} партий, ИИ: ${aiCount}, ` +
+  `карта: ${size || "large (по умолчанию)"}, ` +
   `карты: ${base === null ? "случайные" : "сид " + base}`);
 rows.forEach((r, i) => console.log(` #${i}`, JSON.stringify(r)));
 const wins = rows.filter(r => r.win).map(r => r.sec);

@@ -61,6 +61,13 @@
   #over p{color:var(--dim);margin:6px 0 20px;line-height:1.5}
   #over button{background:var(--gold);border:0;color:#141414;font-weight:700;font-size:15px;
     padding:11px 26px;border-radius:8px;cursor:pointer}
+  /* размер города — переключатель, а не старт: золотом горит только выбранный */
+  #over button.szBtn{background:var(--panel2);border:1px solid var(--line);color:var(--dim);
+    font-weight:600;font-size:13px;padding:8px 13px}
+  #over button.szBtn:hover{border-color:var(--gold)}
+  #over button.szBtn.on{border-color:var(--gold);color:var(--gold)}
+  #over button.szBtn small{display:block;font-size:10px;font-weight:400;opacity:.75}
+  .ovCap{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:-2px}
 </style>
 
 <div id="wrap">
@@ -183,10 +190,20 @@
 <div id="over"><div class="box">
   <h2 id="ovTitle">LEGAL CRIME</h2>
   <p id="ovText"></p>
-  <div id="ovStart" style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
-    <button id="ovN1">1 противник</button>
-    <button id="ovN2">2 противника</button>
-    <button id="ovN3">3 противника</button>
+  <!-- размер выбирается заранее и запоминается, партию начинают кнопки числа противников -->
+  <div id="ovStart" style="display:flex;flex-direction:column;gap:8px">
+    <div class="ovCap">Размер города</div>
+    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+      <button class="szBtn" id="ovSizeSmall">Маленький<small>26 × 20</small></button>
+      <button class="szBtn" id="ovSizeNormal">Нормальный<small>33 × 25</small></button>
+      <button class="szBtn" id="ovSizeLarge">Большой<small>40 × 30</small></button>
+    </div>
+    <div class="ovCap" style="margin-top:8px">Противники — кнопка начинает партию</div>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+      <button id="ovN1">1 противник</button>
+      <button id="ovN2">2 противника</button>
+      <button id="ovN3">3 противника</button>
+    </div>
   </div>
   <!-- те же два тумблера, что в панели: одно состояние, два места показа -->
   <div id="ovAudio" style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:14px">
@@ -210,8 +227,26 @@ new ResizeObserver(resize).observe(stage); resize();
 
 // ---------- Карта города ----------
 const TILE=64;                 // размер клетки
-const COLS=40, ROWS=30;        // размер города в клетках
-const WORLD_W=COLS*TILE, WORLD_H=ROWS*TILE;
+// Размер города выбирается перед партией. Число точек (BIZ_CAP) идёт вместе с площадью:
+// это НЕ косметика, а рычаг сложности — армия ИИ упирается в территорию, а армия игрока
+// только в деньги, поэтому плотность точек держим примерно равной (см. CLAUDE.md).
+// biz — потолок числа заведений; он же нижняя планка для validateTerrain, так что
+// поднимать его выше того, что генератор реально размещает, нельзя: карта уйдёт в plainGrid.
+const MAP_SIZES={
+  small: {name:"Маленький", cols:26, rows:20, biz:18},
+  normal:{name:"Нормальный",cols:33, rows:25, biz:26},
+  large: {name:"Большой",   cols:40, rows:30, biz:34},
+};
+const SIZE_KEYS=Object.keys(MAP_SIZES), DEFAULT_SIZE="large";
+// COLS/ROWS/WORLD_*/BIZ_CAP теперь переменные: их переставляет setMapSize, и только
+// из initWorld — менять размер под живым миром нельзя, рендер читает grid по COLS/ROWS.
+let mapSize=DEFAULT_SIZE, COLS, ROWS, WORLD_W, WORLD_H, BIZ_CAP;
+function setMapSize(key){
+  mapSize = MAP_SIZES[key] ? key : DEFAULT_SIZE;
+  const s=MAP_SIZES[mapSize];
+  COLS=s.cols; ROWS=s.rows; WORLD_W=COLS*TILE; WORLD_H=ROWS*TILE; BIZ_CAP=s.biz;
+}
+setMapSize(DEFAULT_SIZE);
 // Алфавит клеток. Значения 0/1/2 исторические — их порядок менять нельзя.
 const T={ROAD:0, BLD:1, BIZ:2, WATER:3, BRIDGE:4, PARK:5, POND:6, PLAZA:7};
 const grid=[];
@@ -549,7 +584,7 @@ function genMap(seed){
 // Всё это — нелегальные УЛУЧШЕНИЯ (UPGRADES), и пересечение названий стирало бы разницу
 // между «точкой как она есть» и тем, во что её превратили за деньги.
 const BIZ_NAMES=["Прачечная","Типография","Ломбард","Булочная","Автосервис","Пиццерия","Отель","Банк","Аптека","Кофейня","Цирюльня","Магазин"];
-const BIZ_CAP=34, BIZ_GAP=4;
+const BIZ_GAP=4;               // BIZ_CAP живёт в MAP_SIZES: он зависит от размера города
 const businesses=[];
 // «Есть куда подойти»: хотя бы один ортогональный сосед ходибелен. Вода и пруд в соседях
 // не считаются — иначе заведение окажется без единой точки захвата.
@@ -726,9 +761,12 @@ function spawnUnit(type,x,y,team,role){
 
 // ---------- Инициализация мира: строится заново при каждой новой партии ----------
 const START_MONEY=360, DEFAULT_AI=2;
-function initWorld(aiCount,seed){
+function initWorld(aiCount,seed,size){
   aiCount=Math.max(1,Math.min(3,aiCount||1));
   factions=["player"].concat(AI_KEYS.slice(0,aiCount));
+  // размер города переставляется ТОЛЬКО здесь, перед genMap: COLS/ROWS живут в рендере
+  // и в буферах, и смена их под живым миром прочитала бы grid за его краем
+  setMapSize(size===undefined ? mapSize : size);
   // genMap чистит grid/blocks/buildings/roadCols/roadRows «на месте» и сам зовёт placeBiz:
   // расстановка точек — часть валидации карты, невалидная перегенерируется на другом сиде.
   genMap(seed===undefined ? (Math.random()*1e9|0) : seed);
@@ -1195,8 +1233,10 @@ function findPath(sx,sy,gx,gy){
 // цель постоянно лежит на другом берегу, и отряд уходит стоять в набережную. Планировка
 // города известна всем по условию тумана, так что это не читерство, а умение ходить.
 // Буфер один: результат надо использовать до следующего вызова.
-const _distBuf=new Int32Array(COLS*ROWS);
+// Буфер переезжает вместе с размером карты: COLS*ROWS меняется между партиями.
+let _distBuf=new Int32Array(COLS*ROWS);
 function distFrom(x,y){
+  if(_distBuf.length!==COLS*ROWS) _distBuf=new Int32Array(COLS*ROWS);
   _distBuf.fill(-1);
   const p=nearestPassable(Math.floor(x/TILE),Math.floor(y/TILE));
   if(!p) return _distBuf;
@@ -1888,14 +1928,15 @@ function showStart(){
   ended=true; paused=true;
   document.getElementById("ovTitle").textContent="LEGAL CRIME";
   document.getElementById("ovText").textContent=
-    "Криминальная FFA: выбери число противников. Каждый воюет за себя — свали чужие штабы и останься последним.";
+    "Криминальная FFA: выбери размер города и число противников. Каждый воюет за себя — свали чужие штабы и останься последним.";
   ovStart.style.display="flex"; ovAgain.style.display="none"; ovAudio.style.display="flex";
   syncAudioUI();                 // галки старта показывают то же, что галки панели
+  syncSizeUI();                  // и выбранный размер города — он держится между партиями
   over.style.display="grid";
 }
 function startGame(n){
   audioResume();                 // клик по кнопке старта — тот самый жест, которого ждёт браузер
-  initWorld(n); over.style.display="none";
+  initWorld(n,undefined,wantSize); over.style.display="none";
   toast("Найм в штабе: 1 2 3 4. Цель — свалить чужие штабы."); }
 function showOver(win){
   document.getElementById("ovTitle").textContent = win?"ГОРОД ТВОЙ":"ШТАБ ПАЛ";
@@ -1907,6 +1948,25 @@ function showOver(win){
 }
 ["1","2","3"].forEach(n=>{ document.getElementById("ovN"+n).onclick=()=>startGame(+n); });
 ovAgain.onclick=showStart;
+
+// Размер города. wantSize — выбор на стартовом экране, mapSize — размер уже построенного
+// мира: применяется он только в initWorld, иначе рендер полез бы в grid за его краем.
+// Кнопки и подписи идут циклом по MAP_SIZES — как кнопки классов по BUY_KEYS.
+let wantSize=DEFAULT_SIZE;
+function szId(k){ return "ovSize"+k[0].toUpperCase()+k.slice(1); }
+function syncSizeUI(){
+  SIZE_KEYS.forEach(k=>{
+    const el=document.getElementById(szId(k)); if(!el) return;
+    const s=MAP_SIZES[k];
+    el.className="szBtn"+(k===wantSize?" on":"");
+    el.innerHTML=s.name+"<small>"+s.cols+" × "+s.rows+" · точек "+s.biz+"</small>";
+  });
+}
+function pickSize(k){ if(!MAP_SIZES[k]) return; wantSize=k; syncSizeUI(); }
+SIZE_KEYS.forEach(k=>{
+  const el=document.getElementById(szId(k)); if(el) el.onclick=()=>pickSize(k);
+});
+syncSizeUI();
 
 // ---------- Рендер ----------
 // Палитры рельефа. Вся графика — код: ни картинок, ни паттернов, ни внешних ассетов.

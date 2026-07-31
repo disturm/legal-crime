@@ -16,7 +16,12 @@ const BRIDGE = `
   get ended(){return ended}, get wave(){return wave},
   get outcome(){return outcome}, get factions(){return factions},
   set W(v){W=v}, set H(v){H=v},
-  TYPES, BUY_KEYS, AI_BRIBE, TEAM, grid, TILE, COLS, ROWS, WORLD_W, WORLD_H, unlocks,
+  // размер карты теперь переменный — только через геттеры, иначе мост запомнит стартовый
+  get COLS(){return COLS}, get ROWS(){return ROWS},
+  get WORLD_W(){return WORLD_W}, get WORLD_H(){return WORLD_H},
+  get BIZ_CAP(){return BIZ_CAP}, get mapSize(){return mapSize},
+  get wantSize(){return wantSize}, MAP_SIZES, SIZE_KEYS, DEFAULT_SIZE, pickSize, szId,
+  TYPES, BUY_KEYS, AI_BRIBE, TEAM, grid, TILE, unlocks,
   T, walkableT, opaqueT, buildableT, inMap, blocksSight, nextToWalk,
   buildings, blocks, roadCols, roadRows, isRoadCol, isRoadRow,
   get mapSeed(){return mapSeed},

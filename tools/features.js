@@ -552,6 +552,94 @@ function ok(name, cond, extra) {
   ok("сид карты записан", g.mapSeed > 0, `mapSeed=${g.mapSeed}`);
 }
 
+// ---------- размер карты: три пресета, выбор перед партией ----------
+// COLS/ROWS/BIZ_CAP стали переменными, а на них завязаны буферы (туман, волна BFS)
+// и рендер. Здесь проверяется, что размер переезжает целиком, а не наполовину.
+{
+  const g = loadGame();
+  const SEEDS = [3001, 3002, 3003, 3004];
+  const keys = g.SIZE_KEYS;
+
+  ok("размеров ровно три", keys.length === 3, keys.join(", "));
+  ok("у каждого размера своя кнопка на старте", keys.every(k => g.els[g.szId(k)]),
+    "нет кнопки: " + keys.filter(k => !g.els[g.szId(k)]).join(", "));
+
+  // лесенка: и площадь, и число точек растут вместе — плотность точек примерно одна,
+  // иначе размер тайком стал бы рычагом сложности сам по себе
+  const area = k => g.MAP_SIZES[k].cols * g.MAP_SIZES[k].rows;
+  ok("площадь растёт от размера к размеру",
+    keys.every((k, i) => i === 0 || area(k) > area(keys[i - 1])),
+    keys.map(k => `${k} ${area(k)}`).join(", "));
+  ok("число точек растёт вместе с площадью",
+    keys.every((k, i) => i === 0 || g.MAP_SIZES[k].biz > g.MAP_SIZES[keys[i - 1]].biz),
+    keys.map(k => `${k} ${g.MAP_SIZES[k].biz}`).join(", "));
+  // Плотность точек на маленькой карте выше не по недосмотру: партия на четыре фракции
+  // требует минимум 16 точек (validateBiz), и на 520 клетках честная доля большой карты
+  // (≈15) в этот минимум не влезает. Разбег ограничен, чтобы «маленький» не превратился
+  // в карту, где точек столько же, сколько на большой, — тогда он стал бы просто лёгким.
+  const dens = keys.map(k => g.MAP_SIZES[k].biz / area(k));
+  ok("плотность точек по размерам расходится в пределах четверти",
+    Math.max(...dens) / Math.min(...dens) < 1.25,
+    keys.map((k, i) => `${k} ${(dens[i] * 1000).toFixed(1)}‰`).join(", "));
+  ok("на самом маленьком есть запас над минимумом четырёх фракций",
+    g.MAP_SIZES[keys[0]].biz >= 18, `${g.MAP_SIZES[keys[0]].biz} точек против минимума 16`);
+
+  const bad = { grid: [], comp: [], spots: [], hq: [], plain: [], few: [] };
+  for (const k of keys) {
+    const s = g.MAP_SIZES[k];
+    for (const seed of SEEDS) {
+      g.reset(3, seed, k);
+      if (g.COLS !== s.cols || g.ROWS !== s.rows || g.WORLD_W !== s.cols * g.TILE ||
+          g.WORLD_H !== s.rows * g.TILE || g.BIZ_CAP !== s.biz ||
+          g.grid.length !== s.rows || g.grid[0].length !== s.cols) bad.grid.push(k + "/" + seed);
+      // plainGrid — аварийный откат без рельефа: на нём нет воды. Если сюда попадаем,
+      // значит biz задран выше того, что генератор реально размещает на этой площади.
+      if (!g.grid.some(row => row.includes(g.T.WATER))) bad.plain.push(k + "/" + seed);
+      if (g.businesses.length < Math.max(12, g.factions.length * 4)) bad.few.push(k + "/" + seed);
+      if (g.landComponents().sizes.length !== 1) bad.comp.push(k + "/" + seed);
+      if (!g.businesses.every(b => g.captureSpots(b).length)) bad.spots.push(k + "/" + seed);
+      const hqs = g.factions.map(f => g.factionHQ(f));
+      const from = g.captureSpots(hqs[0])[0];
+      if (!hqs.slice(1).every(h => !!g.findPath(from.x, from.y, g.captureSpots(h)[0].x, g.captureSpots(h)[0].y)))
+        bad.hq.push(k + "/" + seed);
+    }
+  }
+  ok("размер переехал целиком: COLS/ROWS/WORLD/BIZ_CAP и сама сетка", !bad.grid.length, bad.grid.join(", "));
+  ok("рельеф генерируется на всех размерах, без отката в plainGrid", !bad.plain.length, bad.plain.join(", "));
+  ok("точек хватает на четыре фракции на любом размере", !bad.few.length, bad.few.join(", "));
+  ok("земля односвязна на всех размерах", !bad.comp.length, bad.comp.join(", "));
+  ok("у каждой точки есть подход на всех размерах", !bad.spots.length, bad.spots.join(", "));
+  ok("штабы взаимно достижимы на всех размерах", !bad.hq.length, bad.hq.join(", "));
+
+  // Буферы, посчитанные по COLS*ROWS, обязаны переехать вместе с картой: большая карта,
+  // потом маленькая — самый опасный порядок, старый буфер длиннее и молча «работает».
+  g.reset(2, 3001, "large");
+  g.reset(2, 3001, "small");
+  const cells = g.COLS * g.ROWS;
+  ok("туман переехал на новый размер", g.factions.every(f => g.vis[f].length === cells),
+    g.factions.map(f => g.vis[f].length).join(", "));
+  const hq = g.playerHQ();
+  ok("волна BFS переехала на новый размер", g.distFrom(hq.x, hq.y).length === cells);
+  ok("камера зажимается по новому миру", (g.cam.x < g.WORLD_W && g.cam.y < g.WORLD_H),
+    `cam ${Math.round(g.cam.x)},${Math.round(g.cam.y)} мир ${g.WORLD_W}x${g.WORLD_H}`);
+
+  // Размер держится между партиями: «Заново» не должно втихую вернуть игрока на большую карту.
+  g.reset(2, 3002);
+  ok("без явного размера партия идёт на прежнем", g.mapSize === "small" && g.COLS === g.MAP_SIZES.small.cols,
+    `${g.mapSize} ${g.COLS}x${g.ROWS}`);
+
+  // Выбор на стартовом экране — отдельно от живого мира: кнопка не должна менять
+  // COLS/ROWS под уже нарисованной картой.
+  g.pickSize("large");
+  ok("кнопка размера не трогает живой мир", g.mapSize === "small" && g.wantSize === "large",
+    `mapSize=${g.mapSize} wantSize=${g.wantSize}`);
+  ok("выбранная кнопка размера подсвечена", g.els[g.szId("large")].className.includes("on") &&
+    !g.els[g.szId("small")].className.includes("on"),
+    `${g.els[g.szId("large")].className} | ${g.els[g.szId("small")].className}`);
+  g.pickSize("нетакого");
+  ok("неизвестный размер игнорируется", g.wantSize === "large");
+}
+
 // ---------- звук: выстрелы фогнуты, тумблеры едины, джаз идёт ----------
 {
   // с заглушкой WebAudio: без неё весь звуковой модуль — no-op (это проверяется ниже отдельно)
