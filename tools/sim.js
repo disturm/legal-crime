@@ -83,7 +83,9 @@ function play(g, mode, aiCount, seed, size, fog) {
   let t = 0, peakEnemy = 0;
   // Как и ИИ, бот специализируется на одном типе рынка: доля растёт только у того,
   // кто держит фокус, а голая жадность по «доход на доллар» сводит все партии к стриптизу.
-  const fav = g.UP_KEYS[Math.floor(Math.random() * g.UP_KEYS.length)];
+  // Только доходные типы: тренировочный центр — не экономика, а логистика найма,
+  // и модель «жадность по доходу на доллар» о нём сказать ничего не может.
+  const fav = g.MARKET_KEYS[Math.floor(Math.random() * g.MARKET_KEYS.length)];
   for (let i = 0; i < TICKS && !g.ended; i++) {
     g.update(0.05); t += 0.05;
     peakEnemy = Math.max(peakEnemy, g.units.filter(u => u.team !== "player").length);
@@ -102,7 +104,7 @@ function play(g, mode, aiCount, seed, size, fog) {
     if (mode === "mass") {
       const plain = mine.filter(b => !b.hq && !b.kind);
       let kind = null, bv = -1;
-      g.UP_KEYS.forEach(k => {
+      g.MARKET_KEYS.forEach(k => {
         if (g.money < g.UPGRADES[k].cost + g.AI_UP_RESERVE) return;
         const v = g.upIncomeAt("player", k, 1) / g.UPGRADES[k].cost + (k === fav ? 0.02 : 0);
         if (v > bv) { bv = v; kind = k; }
@@ -225,7 +227,7 @@ function play(g, mode, aiCount, seed, size, fog) {
     inc: Math.round(g.fInc.player),                                          // доход/с к концу партии
     up: g.businesses.filter(b => b.owner === "player" && b.kind).length,     // своих улучшенных
     aiUp: g.businesses.filter(b => b.owner !== "player" && b.kind).length,   // улучшенных у соперников
-    share: g.UP_KEYS.map(k => g.marketPct("player", k)).join("/"),           // доли по типам
+    share: g.MARKET_KEYS.map(k => g.marketPct("player", k)).join("/"),      // доли по типам
   };
 }
 
