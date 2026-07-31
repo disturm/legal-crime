@@ -28,8 +28,10 @@ function ok(name, cond, extra) {
 {
   const g = loadGame();
   g.reset(1);
+  // по TYPES, а не поимённо: перечень классов молча пропускал бы новый
   ok("открыт только вышибала", g.unlocks.player.bouncer === true &&
-    !g.unlocks.player.shooter && !g.unlocks.player.sniper);
+    Object.keys(g.TYPES).every(t => t === "bouncer" || !g.unlocks.player[t]),
+    "открыто: " + Object.keys(g.unlocks.player).filter(t => g.unlocks.player[t]).join(", "));
 
   const n0 = g.units.filter(u => u.team === "player").length;
   g.money = 5000;
@@ -55,6 +57,92 @@ function ok(name, cond, extra) {
     g.els.costShooter.textContent === "$" + g.TYPES.shooter.cost, g.els.costShooter.textContent);
   ok("панель: у закрытого класса цена взятки",
     g.els.costSniper.textContent === "взятка $" + g.TYPES.sniper.bribe, g.els.costSniper.textContent);
+
+  // 4-й класс проходит те же ворота. Идёт ПОСЛЕ проверок панели: поднятая касса
+  // сбила бы проверку «без денег взятка не проходит».
+  g.money = 5000;
+  g.selectBuy("undertaker");
+  ok("гробовщик открывается взяткой и бойца ещё не даёт",
+    g.unlocks.player.undertaker === true &&
+    !g.units.some(u => u.team === "player" && u.type === "undertaker") &&
+    Math.round(g.money) === 5000 - g.TYPES.undertaker.bribe, `осталось ${Math.round(g.money)}`);
+  g.selectBuy("undertaker");
+  ok("после взятки гробовщик нанимается",
+    g.units.filter(u => u.team === "player" && u.type === "undertaker").length === 1);
+  ok("панель: у гробовщика своя цена найма",
+    g.els.costUndertaker.textContent === "$" + g.TYPES.undertaker.cost, g.els.costUndertaker.textContent);
+
+  // Заглушка getElementById заводит элемент, только когда его СПРОСИЛИ: запись в els
+  // и есть доказательство, что класс проведён в панель, а не только в TYPES.
+  const cap = t => t[0].toUpperCase() + t.slice(1);
+  ok("у каждого класса своя кнопка в панели", Object.keys(g.TYPES).every(t => g.els["buy" + cap(t)]),
+    "нет кнопки: " + Object.keys(g.TYPES).filter(t => !g.els["buy" + cap(t)]).join(", "));
+  ok("новый класс не забыт в resetUnlocks", g.factions.every(f =>
+    Object.keys(g.TYPES).every(t => typeof g.unlocks[f][t] === "boolean")));
+}
+
+// ---------- гробовщик: томпсон, самый плотный огонь и цена этой плотности ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  const U = g.TYPES.undertaker, S = g.TYPES.sniper, Sh = g.TYPES.shooter;
+  const all = Object.keys(g.TYPES);
+
+  ok("гробовщик стреляет чаще всех", all.every(t => g.TYPES[t].rate >= U.rate) && U.rate < Sh.rate / 2,
+    `rate=${U.rate}, у стрелка ${Sh.rate}`);
+  ok("снайпер стреляет реже всех", all.every(t => g.TYPES[t].rate <= S.rate), `rate=${S.rate}`);
+  ok("гробовщик бьёт дальше стрелка, но не дальше снайпера",
+    U.range > Sh.range && U.range < S.range, `${Sh.range} < ${U.range} < ${S.range}`);
+  ok("здоровья больше, чем у стрелка", U.hp > Sh.hp, `${U.hp} против ${Sh.hp}`);
+  ok("плотность огня оплачена: самый дорогой класс по найму, взятке и содержанию",
+    all.every(t => t === "undertaker" ||
+      (g.TYPES[t].cost < U.cost && g.TYPES[t].bribe < U.bribe && g.TYPES[t].up < U.up)),
+    `наём $${U.cost}, взятка $${U.bribe}, содержание $${U.up}/с`);
+  ok("за секунду боя выдаёт заметно больше стрелка",
+    U.dmg / U.rate > Sh.dmg / Sh.rate * 1.5,
+    `${(U.dmg / U.rate).toFixed(1)} против ${(Sh.dmg / Sh.rate).toFixed(1)} урона/с`);
+
+  const hq = g.playerHQ(), sp = g.captureSpots(hq)[0];
+  g.spawnUnit("sniper", sp.x, sp.y, "player");
+  g.spawnUnit("undertaker", sp.x + 30, sp.y, "ai1");
+  const sniper = g.units[g.units.length - 2], mark = g.units[g.units.length - 1];
+
+  // Томпсон обязан идти по ОБЩЕЙ пулевой ветке fire: своей ветки у него нет,
+  // и появление такой ветки — ровно то, что этот тест должен поймать.
+  mark.combat = 0;
+  g.bullets.length = 0;
+  g.fire(mark, sniper);
+  ok("томпсон бьёт пулей, без снайперской скидки и не в упор",
+    g.bullets.length === 1 && g.bullets[0].dmg === U.dmg, `пуль ${g.bullets.length}`);
+  ok("свой выстрел из томпсона ставит гробовщика в стойку", mark.combat > 0);
+
+  // Контригра ровно одна: снайпер берёт гробовщика только на подходе.
+  g.bullets.length = 0;
+  g.fire(sniper, mark);
+  ok("ввязавшегося в бой гробовщика снайпер уже не снимает",
+    g.bullets[0] && g.bullets[0].dmg < mark.hp,
+    g.bullets[0] && `урон ${g.bullets[0].dmg} при ${mark.hp} HP`);
+
+  mark.combat = 0;
+  g.bullets.length = 0;
+  g.fire(sniper, mark);
+  ok("зазевавшегося гробовщика снайпер снимает с одного выстрела",
+    g.bullets[0] && g.bullets[0].dmg >= mark.maxhp,
+    g.bullets[0] && `урон ${g.bullets[0].dmg} при ${mark.maxhp} HP`);
+}
+
+// ---------- ИИ открывает классы теми же воротами, только платит территорией ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  const B = g.AI_BRIBE;
+  ok("у каждого платного класса есть порог для ИИ", Object.keys(g.TYPES)
+    .every(t => (g.TYPES[t].bribe === 0) === (B[t] === undefined)), JSON.stringify(B));
+  ok("чем дороже взятка игрока, тем позже класс открывается у ИИ",
+    Object.keys(B).sort((a, b) => g.TYPES[a].bribe - g.TYPES[b].bribe)
+      .every((t, i, a) => !i || B[a[i - 1]] < B[t]), JSON.stringify(B));
+  ok("пороги достижимы на карте", Object.keys(B).every(t => B[t] <= g.businesses.length),
+    `${g.businesses.length} точек всего`);
 }
 
 // ---------- снайпер: с одного выстрела, но не по бойцу в стойке ----------

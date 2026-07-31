@@ -14,6 +14,10 @@ const per = Math.max(1, Math.floor(FRAMES / SEEDS.length));
 SEEDS.forEach((seed, si) => {
   g.reset(si === SEEDS.length - 1 ? 3 : 2, seed);   // последний прогон — на трёх ИИ
   for (let i = 0; i < per * 0.85; i++) { g.update(0.05); g.draw(); }
+  // по бойцу каждого класса: силуэт и оружие — отдельные ветки рендера, а ИИ за партию
+  // может так и не открыть дорогой класс, и его ветка осталась бы непроверенной
+  const sp = g.captureSpots(g.playerHQ())[0];
+  if (sp) Object.keys(g.TYPES).forEach((t, i) => g.spawnUnit(t, sp.x + i * 6, sp.y, "player"));
   // повтор с выделенными юнитами: кольца выделения и рамка — отдельные ветки рендера
   g.units.slice(0, 3).forEach(u => g.selected.add(u.id));
   // и с улучшенными заведениями: иконки типов, подпись и рамка выбранной точки

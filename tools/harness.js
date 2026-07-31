@@ -16,7 +16,7 @@ const BRIDGE = `
   get ended(){return ended}, get wave(){return wave},
   get outcome(){return outcome}, get factions(){return factions},
   set W(v){W=v}, set H(v){H=v},
-  TYPES, TEAM, grid, TILE, COLS, ROWS, WORLD_W, WORLD_H, unlocks,
+  TYPES, BUY_KEYS, AI_BRIBE, TEAM, grid, TILE, COLS, ROWS, WORLD_W, WORLD_H, unlocks,
   T, walkableT, opaqueT, buildableT, inMap, blocksSight, nextToWalk,
   buildings, blocks, roadCols, roadRows, isRoadCol, isRoadRow,
   get mapSeed(){return mapSeed},

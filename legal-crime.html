@@ -37,6 +37,8 @@
   .mk.square{border-radius:2px}
   .mk.triangle{background:transparent;width:0;height:0;
     border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:13px solid var(--blue)}
+  /* ромб — квадрат на угол; 11px даёт диагональ ≈15.5px, в размер круга и квадрата */
+  .mk.diamond{width:11px;height:11px;border-radius:2px;transform:rotate(45deg)}
   /* значки типов заведений — те же силуэты, что рисуются на плитке */
   .ik{width:15px;height:15px;flex:0 0 auto;fill:var(--gold)}
   kbd{background:#0e1219;border:1px solid var(--line);border-radius:4px;padding:0 5px;
@@ -75,7 +77,7 @@
     <div class="legend" id="legend"></div>
     <div id="standings" style="font-size:11px;color:var(--dim);line-height:1.6"></div>
 
-    <div class="grp-title">Нанять бойца в штабе — клавиши 1 · 2 · 3</div>
+    <div class="grp-title">Нанять бойца в штабе — клавиши 1 · 2 · 3 · 4</div>
     <button class="buy" id="buyBouncer">
       <span class="mk circle"></span>
       <span style="flex:1">Вышибала <kbd>1</kbd><small>круг · дубина · 140 HP · ближний · сила 1 · −$1/с</small></span>
@@ -90,6 +92,11 @@
       <span class="mk triangle"></span>
       <span style="flex:1">Снайпер <kbd>3</kbd><small>треугольник · снимает с выстрела, но редко и только зазевавшихся · 55 HP · сила 2.2 · −$3/с</small></span>
       <span class="cost" id="costSniper">взятка $800</span>
+    </button>
+    <button class="buy" id="buyUndertaker">
+      <span class="mk diamond"></span>
+      <span style="flex:1">Гробовщик <kbd>4</kbd><small>ромб · томпсон · очередями, дальше стрелка · 120 HP · сила 2.5 · −$5/с</small></span>
+      <span class="cost" id="costUndertaker">взятка $1200</span>
     </button>
     <div style="font-size:11px;color:var(--dim);line-height:1.4">
       Классы открываются <b style="color:var(--green)">взяткой</b> — разовой платой.
@@ -144,7 +151,7 @@
       • ПКМ по карте — идти<br>
       • ПКМ по бизнесу — маршрут к точке перед его гранью, откуда идёт захват<br>
       • ПКМ по врагу — атаковать<br>
-      • Найм: <b>1 2 3</b> или кнопки — сперва взятка, потом боец в штабе<br>
+      • Найм: <b>1 2 3 4</b> или кнопки — сперва взятка, потом боец в штабе<br>
       • Пробел — пауза<br><br>
       <b>Цвет</b> — чья сторона, <b>форма</b> — класс бойца.
       В бизнес не зайти, сквозь дома не стреляют.<br><br>
@@ -152,7 +159,8 @@
       Тянет точку <b>один самый сильный</b> гангстер — скорость зависит от его силы.
       Штаб идёт вдвое дольше.<br><br>
       <b>Боевая стойка</b> — оранжевые скобки у бойца: он сам ведёт бой, и выстрел
-      снайпера по нему проходит вскользь.<br><br>
+      снайпера по нему проходит вскользь. Гробовщик из-за скорострельности почти всегда
+      в стойке — снайпер берёт его только на подходе, пока тот ещё не открыл огонь.<br><br>
 
       <b>Заведения:</b> свою точку (кроме штаба) можно один раз улучшить в бар, стриптиз,
       казино или решение проблем. Доход зависит от <b>доли рынка</b>: чем больше заведений
@@ -610,7 +618,14 @@ const TYPES={
   bouncer:{name:"Вышибала",shape:"circle", hp:140,speed:70,range:26,dmg:26,rate:0.7,r:12,cost:150,up:1,pow:1,  bribe:0,  sight:200},
   shooter:{name:"Стрелок", shape:"square", hp:80, speed:82,range:160,dmg:14,rate:0.45,r:10,cost:300,up:2,pow:1.5,bribe:350,sight:260},
   sniper:{ name:"Снайпер", shape:"triangle",hp:55, speed:66,range:300,dmg:200,rate:3.6,r:11,cost:550,up:3,pow:2.2,bribe:800,sight:340},
+  // Гробовщик — томпсон: самый плотный огонь в игре и самая дорогая аренда.
+  // hp<=200 НАМЕРЕННО: снайпер обязан снимать его с одного выстрела, пока тот сам
+  // не открыл огонь. При rate 0.16 и COMBAT_TIME 2.2 в бою он в стойке ВСЕГДА,
+  // то есть снайпер его в перестрелке не берёт — берёт только на подходе.
+  undertaker:{name:"Гробовщик",shape:"diamond",hp:120,speed:78,range:200,dmg:9,rate:0.16,r:11,cost:900,up:5,pow:2.5,bribe:1200,sight:290},
 };
+// Ростер: порядок кнопок в панели и цифровых хоткеев — как UP_KEYS у улучшений.
+const BUY_KEYS=Object.keys(TYPES);
 // ---------- Улучшение заведений и доля рынка ----------
 // Своё заведение (кроме штаба) можно ОДИН раз улучшить — необратимо. Доход улучшения
 // ЗАМЕНЯЕТ базовый и считается как X*(1 + Y*доля), где доля — часть рынка этого типа
@@ -669,9 +684,13 @@ function buyUpgrade(f,b,kind){
 const unlocks={};
 function resetUnlocks(){
   for(const k in unlocks) delete unlocks[k];
-  factions.forEach(f=>unlocks[f]={bouncer:true,shooter:false,sniper:false});
+  // выводим из TYPES: класс без взятки открыт сразу, остальные закрыты.
+  // Перечень поимённо новый класс молча пропускал бы.
+  factions.forEach(f=>{ const u={}; for(const t of BUY_KEYS) u[t]=TYPES[t].bribe===0; unlocks[f]=u; });
 }
-const AI_BRIBE={shooter:3, sniper:6};   // ИИ «даёт взятку», набрав столько заведений
+// ИИ «даёт взятку», набрав столько заведений. Курс тот же, что у игрока:
+// 350/3 ≈ $117 за точку, 800/6 ≈ $133, 1200/133 ≈ 9. Не одинаковая цена — одинаковый курс.
+const AI_BRIBE={shooter:3, sniper:6, undertaker:9};
 let uid=1;
 const units=[]; const bullets=[]; const fx=[];
 function spawnUnit(type,x,y,team,role){
@@ -767,10 +786,8 @@ let selBiz=null;                           // выбранное своё зав
 const keys={};
 addEventListener("keydown",e=>{keys[e.code]=1;
   if(e.code==="Space"){paused=!paused;e.preventDefault();}
-  // найм с клавиатуры — боец сразу появляется в штабе
-  if(e.code==="Digit1") selectBuy("bouncer");
-  if(e.code==="Digit2") selectBuy("shooter");
-  if(e.code==="Digit3") selectBuy("sniper");
+  // найм с клавиатуры — боец сразу появляется в штабе; цифра = место класса в BUY_KEYS
+  if(/^Digit[1-9]$/.test(e.code)){ const t=BUY_KEYS[+e.code.slice(5)-1]; if(t) selectBuy(t); }
   if(e.code==="KeyH"){   // мгновенно к своему штабу — стандартный хоткей жанра
     const b=playerHQ()||businesses.find(x=>x.owner==="player");
     if(b){ centerOn(b.x,b.y); ping(b.x,b.y,TEAM.player.main); }
@@ -932,21 +949,22 @@ document.getElementById("optEdge").onchange=e=>{
   edgeScrollOn=e.target.checked;
   toast(edgeScrollOn?"Прокрутка краями включена":"Прокрутка краями выключена");
 };
-document.getElementById("buyBouncer").onclick=()=>selectBuy("bouncer");
-document.getElementById("buyShooter").onclick=()=>selectBuy("shooter");
-document.getElementById("buySniper").onclick =()=>selectBuy("sniper");
+// Ростер кнопок выводится из BUY_KEYS — как кнопки улучшений из UP_KEYS. Ручной перечень
+// классов новый класс молча пропускал бы, а тут его забыть нельзя: getElementById упадёт.
+function buyId(t){ return "buy"+upId(t); }
+BUY_KEYS.forEach(t=>{ document.getElementById(buyId(t)).onclick=()=>selectBuy(t); });
 function refreshBuyUI(){
-  [["buyBouncer","bouncer"],["buyShooter","shooter"],["buySniper","sniper"]].forEach(([id,t])=>{
-    const el=document.getElementById(id), ty=TYPES[t];
+  BUY_KEYS.forEach(t=>{
+    const el=document.getElementById(buyId(t)), ty=TYPES[t];
     const open=!!(unlocks.player&&unlocks.player[t]);
     const price=open?ty.cost:ty.bribe;
-    const cost=document.getElementById("cost"+id.slice(3));
+    const cost=document.getElementById("cost"+upId(t));
     if(cost){ cost.textContent=(open?"$":"взятка $")+price; cost.style.color=open?"var(--gold)":"var(--green)"; }
     el.disabled=funds.player<price;
     el.style.borderColor = open?"var(--line)":"var(--green)";
   });
 }
-function upId(k){ return k[0].toUpperCase()+k.slice(1); }   // bar → Bar, как в id разметки
+function upId(k){ return k[0].toUpperCase()+k.slice(1); }   // bar → Bar, undertaker → Undertaker
 UP_KEYS.forEach(k=>{ document.getElementById("buyUp"+upId(k)).onclick=()=>playerUpgrade(k); });
 function refreshUpgradeUI(){
   if(selBiz && selBiz.owner!=="player") selBiz=null;         // точку отняли — выбор снят
@@ -1074,8 +1092,7 @@ function enemyAI(dt){
       const edge=businesses.filter(b=>b.owner===me);
       if(!edge.length) return;                     // земли нет — некому платить бойцам
       // ИИ «даёт взятки» по мере роста территории — те же ворота, что и у игрока
-      if(edge.length>=AI_BRIBE.shooter) unlocks[me].shooter=true;
-      if(edge.length>=AI_BRIBE.sniper)  unlocks[me].sniper=true;
+      for(const t in AI_BRIBE) if(edge.length>=AI_BRIBE[t]) unlocks[me][t]=true;
       // в лимит идут только штурмовики: гарнизоны не должны глушить приток
       const atk=units.filter(u=>u.team===me&&u.role==="attacker").length;
       // Свободный член держит лесенку сложности монотонной: он даёт малой фракции
@@ -1088,8 +1105,11 @@ function enemyAI(dt){
       const from=edge[Math.floor(Math.random()*edge.length)];
       const n=Math.min(5,1+Math.floor(edge.length/2), cap-atk);
       for(let i=0;i<n;i++){
+        // Лесенка порядко-зависима: при всех открытых классах выходит
+        // гробовщик 15% · снайпер 17% · стрелок 34% · вышибала 34%.
         let t="bouncer";                            // закрытые классы ИИ тоже не нанимает
-        if(unlocks[me].sniper&&Math.random()<0.2) t="sniper";
+        if(unlocks[me].undertaker&&Math.random()<0.15) t="undertaker";
+        else if(unlocks[me].sniper&&Math.random()<0.2) t="sniper";
         else if(unlocks[me].shooter&&Math.random()<0.5) t="shooter";
         spawnUnit(t,from.x+(Math.random()*60-30),from.y+(Math.random()*60-30),me,"attacker");
       }
@@ -1531,7 +1551,7 @@ function showStart(){
   over.style.display="grid";
 }
 function startGame(n){ initWorld(n); over.style.display="none";
-  toast("Найм в штабе: 1 2 3. Цель — свалить чужие штабы."); }
+  toast("Найм в штабе: 1 2 3 4. Цель — свалить чужие штабы."); }
 function showOver(win){
   document.getElementById("ovTitle").textContent = win?"ГОРОД ТВОЙ":"ШТАБ ПАЛ";
   document.getElementById("ovText").textContent = win
@@ -1861,11 +1881,15 @@ function drawMinimap(){
   ctx.fillText("клик — перейти", m.x, m.y-9);
 }
 
-// силуэт класса: круг — вышибала, квадрат — стрелок, треугольник — снайпер
+// силуэт класса: круг — вышибала, квадрат — стрелок, треугольник — снайпер, ромб — гробовщик
 function unitPath(x,y,r,shape,ang){
   ctx.beginPath();
   if(shape==="circle"){ ctx.arc(x,y,r,0,7); }
   else if(shape==="square"){ const s=r*0.92; ctx.rect(x-s,y-s,s*2,s*2); }
+  else if(shape==="diamond"){   // ромб — квадрат на угол; направление показывает ствол, не корпус
+    const s=r*1.2;
+    ctx.moveTo(x,y-s); ctx.lineTo(x+s,y); ctx.lineTo(x,y+s); ctx.lineTo(x-s,y); ctx.closePath();
+  }
   else { // треугольник смотрит по направлению взгляда
     for(let i=0;i<3;i++){ const a=ang+i*2.094;
       const px=x+Math.cos(a)*r*1.25, py=y+Math.sin(a)*r*1.25;
@@ -1892,6 +1916,11 @@ function drawUnit(u){
   }else if(u.type==="shooter"){ // короткий ствол
     ctx.lineWidth=3.5; ctx.beginPath(); ctx.moveTo(u.x,u.y);
     ctx.lineTo(u.x+Math.cos(ang)*(u.r+7),u.y+Math.sin(ang)*(u.r+7)); ctx.stroke();
+  }else if(u.type==="undertaker"){ // томпсон: короткий ствол и барабанный магазин
+    ctx.lineWidth=3.5; ctx.beginPath(); ctx.moveTo(u.x,u.y);
+    ctx.lineTo(u.x+Math.cos(ang)*(u.r+9),u.y+Math.sin(ang)*(u.r+9)); ctx.stroke();
+    ctx.fillStyle=u.dark; ctx.beginPath();
+    ctx.arc(u.x+Math.cos(ang)*(u.r+3.5),u.y+Math.sin(ang)*(u.r+3.5),3.6,0,7); ctx.fill();
   }else{                        // дубина — толстая и с набалдашником
     ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(u.x,u.y);
     const bx=u.x+Math.cos(ang)*(u.r+6), by=u.y+Math.sin(ang)*(u.r+6);

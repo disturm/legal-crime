@@ -83,7 +83,13 @@ function play(g, mode, aiCount, seed) {
     const h = mine[0];
     // покупка через обычный найм: он же снимает взятку за ещё закрытый класс.
     // Дешёвое ядро, дорогие классы — когда экономика позволяет.
-    const ty = g.money >= 900 ? "sniper" : g.money >= 400 ? "shooter" : "bouncer";
+    // Порог гробовщика включает взятку: первый клик по закрытому классу уходит в неё,
+    // иначе бот отдаёт $1200 и остаётся без бойца. Пороги 900/400 не трогаем —
+    // иначе сдвиг лесенки нельзя будет приписать новому классу.
+    const und = g.TYPES.undertaker;
+    const undPrice = g.unlocks.player.undertaker ? und.cost : und.bribe + und.cost;
+    const ty = g.money >= undPrice ? "undertaker"
+             : g.money >= 900 ? "sniper" : g.money >= 400 ? "shooter" : "bouncer";
     g.selectBuy(ty);
 
     // Улучшения — часть нормальной игры, поэтому модель обязана ими пользоваться:
