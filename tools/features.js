@@ -833,7 +833,9 @@ function ok(name, cond, extra) {
   g.businesses.filter(b => b.owner === "neutral").slice(0, 8).forEach(b => { b.owner = me; });
   g.aiFavor[me] = "bar";                       // самый дорогой тип: на него и копим
   g.tickEconomy(0.001);
-  g.fInc[me] = 200; g.fUp[me] = 20;            // поток, при котором минуты хватает на любую цель
+  // Поток, при котором минуты хватает на любую цель, а армия уже съела свою половину
+  // бюджета содержания (ARMY_FIRST) — иначе фракция сперва набирала бы бойцов.
+  g.fInc[me] = 200; g.fUp[me] = 100;
   g.unlocks[me].shooter = true;
 
   // Пол по армии: без тел копить нечего — фракция потеряет точки вместе с доходом,
@@ -889,6 +891,17 @@ function ok(name, cond, extra) {
   const back = new Set();
   for (let i = 0; i < 40; i++) back.add(g.aiPickHire(me));
   ok("и найм возвращается к обычному", back.has("shooter"), "выбирал: " + [...back].join(", "));
+
+  // Армия впереди накоплений, пока не выбрана её половина бюджета содержания: иначе
+  // богатая фракция копит без остановки и остаётся с горсткой бойцов при большом доходе.
+  g.businesses.forEach(b => { if (b.owner === me && !b.hq) b.kind = null; });
+  g.fInc[me] = 400; g.fUp[me] = 100;           // 100 < 400*UPKEEP_SHARE*ARMY_FIRST
+  ok("пока армия не набрана, ИИ не копит",
+    g.fUp[me] < g.fInc[me] * g.UPKEEP_SHARE * g.ARMY_FIRST && g.aiGoal(me) === null,
+    `расход ${g.fUp[me]} при доходе ${g.fInc[me]}, цель ${JSON.stringify(g.aiGoal(me))}`);
+  g.fUp[me] = 180;                             // армия своё взяла — можно копить
+  ok("набрав армию, ИИ снова копит на заведение",
+    g.aiGoal(me) && !g.aiGoal(me).type, JSON.stringify(g.aiGoal(me)));
 
   // Бедная фракция не копит вовсе: цель дороже минуты дохода недостижима, а замерев
   // без подкреплений, фракция потеряет точки быстрее, чем наберётся касса.
