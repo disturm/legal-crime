@@ -1769,6 +1769,15 @@ function markVision(f,x,y,R){
   const list=visFrom(c,r,R);
   for(let i=0;i<list.length;i++) v[list[i]]=1;
 }
+// Клетка и её восемь соседей — безусловно, тот же третий проход visFrom, но от клетки,
+// на которую не надо вставать. Нужен заведению: оно само стоит в НЕПРОХОДИМОЙ клетке,
+// и то, что примыкает к нему стенка к стенке, лучом со ступеней не берётся — заслоняет
+// его же плитка, а обойти её лучу нечем.
+function markNear(f,c,r){
+  const v=vis[f]; if(!v) return;
+  for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++)
+    if(inMap(c+dc,r+dr)) v[(r+dr)*COLS+(c+dc)]=1;
+}
 let fogTimer=0;
 function updateVision(dt){
   fogTimer-=dt;
@@ -1793,6 +1802,7 @@ function updateVision(dt){
     const R=b.hq?SIGHT_HQ:SIGHT_BIZ, spots=captureSpots(b);
     if(spots.length) for(const s of spots) markVision(b.owner,s.x,s.y,R);
     else markVision(b.owner,b.x,b.y,R);   // подхода нет (карта-заглушка) — светим как раньше
+    markNear(b.owner,b.c,b.r);            // и вплотную к самой плитке — со ступеней туда не видно
   }
   // что фракция видит сейчас — то и запоминает; вне обзора остаётся вчерашняя картина
   for(const b of businesses){
