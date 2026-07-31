@@ -46,6 +46,7 @@ const BRIDGE = `
   canUpgrade, buyUpgrade, playerUpgrade, aiUpgrade,
   canDemolish, demolish, playerDemolish, aiSwap, AI_SWAP_GAIN,
   UPKEEP_SHARE, WAVE_MAX, AI_UP_RESERVE, aiCanHire, aiPickHire, BOUNCER_SHARE, BOUNCER_MIN, bouncerShare, armyMix,
+  aiGoal, armyCount, RICH_KEYS, RICH_SHARE, SAVE_SEC,
   get musicOn(){return musicOn}, get sfxOn(){return sfxOn},
   get actx(){return actx},   // в тесте им двигают currentTime: бюджет голосов и планировщик считают по нему
   SHOTS, sfx, setAudio, toggleMute, audioInit, audioResume, audioDuck,

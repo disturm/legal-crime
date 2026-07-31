@@ -339,9 +339,14 @@ function ok(name, cond, extra) {
 }
 
 // ---------- туман войны: обзор режется домами, память о чужих точках ----------
+// Сид обязателен: блок меряет обзор на КОНКРЕТНОЙ раскладке — долю видимых клеток
+// и «дом в глубине квартала». На случайной карте обе проверки флакали через раз:
+// доля видимого зависит от того, на перекрёсток или в тупик встал стартовый боец,
+// а «дом без выхода» рядом со своим штабом виден законно — вплотную к точке светит
+// markNear. Это ровно то же правило, что и для теста экранных координат.
 {
   const g = loadGame();
-  g.reset(2);
+  g.reset(2, 4242);
   const T = g.TILE, COLS = g.COLS, ROWS = g.ROWS;
   const seen = f => { let n = 0; const v = g.vis[f]; for (let i = 0; i < v.length; i++) n += v[i]; return n; };
 
@@ -569,9 +574,11 @@ function ok(name, cond, extra) {
 {
   const g = loadGame();
   const share = () => { const v = g.vis.player; let n = 0; for (let i = 0; i < v.length; i++) n += v[i]; return n / v.length; };
-  g.reset(2);
+  // Карты РАЗНЫЕ, но обе заданы сидом: доля видимого зависит от раскладки — на открытой
+  // карте стартовый обзор подходит к порогу вплотную, и на случайных картах проверка флакала.
+  g.reset(2, 4242);
   const first = share();
-  g.reset(2);                                    // новая карта — кэш лучей обязан пересчитаться
+  g.reset(2, 1007);                              // новая карта — кэш лучей обязан пересчитаться
   ok("после новой партии обзор снова узкий", share() < 0.15,
     `было ${(first * 100).toFixed(1)}%, стало ${(share() * 100).toFixed(1)}%`);
   ok("память о точках пересоздана под новую карту",
@@ -777,8 +784,12 @@ function ok(name, cond, extra) {
 {
   const g = loadGame();
   g.reset(1);
-  g.businesses.filter(b => b.owner === "neutral").slice(0, 6).forEach(b => { b.owner = "ai1"; });
+  g.businesses.filter(b => b.owner === "neutral").slice(0, 4).forEach(b => { b.owner = "ai1"; });
   g.tickEconomy(0.001);                       // посчитать доход и расход фракции
+  // Здесь мерится САМА ВОЛНА, поэтому фракции не на что копить: любимый тип снят,
+  // а дорогие классы ещё не открыты территорией (точек меньше AI_BRIBE.sniper).
+  // Накопления проверяются своим блоком — иначе этот тест мерил бы их, а не оплату волны.
+  g.aiFavor.ai1 = null;
   // кассы хватает на бойцов, но не на улучшение (иначе aiUpgrade съест её первым)
   g.funds.ai1 = g.UPGRADES.strip.cost + g.AI_UP_RESERVE - 1;
   const cash = g.funds.ai1;
@@ -809,6 +820,85 @@ function ok(name, cond, extra) {
   ok("класс, ещё не открытый территорией, за деньги не нанимается",
     !g.unlocks.ai1.undertaker && !hired.has("undertaker"),
     "нанимал: " + [...hired].join(", "));
+}
+
+// ---------- ИИ копит: на любимый тип заведения и на дорогой класс ----------
+// Без цели накопления волна тратит кассу каждые HIRE_TICK, и потолок кассы фракции
+// равен цене стрелка плюс доход за такт. Всё, что дороже, недостижимо по построению:
+// замер показывал ИИ с доходом $484/с, ни разу не поднявшийся выше $893.
+{
+  const g = loadGame();
+  g.reset(1);
+  const me = "ai1";
+  g.businesses.filter(b => b.owner === "neutral").slice(0, 8).forEach(b => { b.owner = me; });
+  g.aiFavor[me] = "bar";                       // самый дорогой тип: на него и копим
+  g.tickEconomy(0.001);
+  g.fInc[me] = 200; g.fUp[me] = 20;            // поток, при котором минуты хватает на любую цель
+  g.unlocks[me].shooter = true;
+
+  // Пол по армии: без тел копить нечего — фракция потеряет точки вместе с доходом,
+  // ради которого копила. Стартовых бойцов у неё двое, то есть меньше порога.
+  const sp = g.captureSpots(g.factionHQ(me))[0];
+  g.funds[me] = 100000;
+  ok("без армии ИИ не копит вовсе",
+    g.armyMix(me).all < g.BOUNCER_MIN && g.aiGoal(me) === null,
+    `тел ${g.armyMix(me).all}, цель ${JSON.stringify(g.aiGoal(me))}`);
+  for (let i = 0; i < 3; i++) g.spawnUnit("shooter", sp.x, sp.y, me);
+
+  g.funds[me] = g.UPGRADES.bar.cost;           // почти накопили — не хватает резерва
+  const saving = new Set();
+  for (let i = 0; i < 40; i++) saving.add(g.aiPickHire(me));
+  ok("копя на заведение, ИИ не разменивает кассу на бойцов",
+    [...saving].every(t => t === null), "выбирал: " + [...saving].join(", "));
+
+  // Прежний запасной вариант «на любимый не хватило — возьму лучший по доходу на доллар»
+  // указывал у всех фракций на стриптиз: он дешевле всех и первым проходил по кассе.
+  g.funds[me] = g.UPGRADES.strip.cost + g.AI_UP_RESERVE;
+  g.aiUpgrade(me);
+  ok("на дешёвый тип ИИ не разменивается — копит на свой",
+    g.businesses.every(b => b.owner !== me || !b.kind),
+    JSON.stringify(g.businesses.filter(b => b.owner === me && b.kind).map(b => b.kind)));
+
+  g.funds[me] = g.UPGRADES.bar.cost + g.AI_UP_RESERVE;
+  g.aiUpgrade(me);
+  ok("накопив, ИИ строит именно любимый тип",
+    g.businesses.filter(b => b.owner === me && b.kind === "bar").length === 1 &&
+    g.funds[me] === g.AI_UP_RESERVE,
+    `касса ${g.funds[me]}, построено ` +
+    JSON.stringify(g.businesses.filter(b => b.owner === me && b.kind).map(b => b.kind)));
+
+  // Строить негде — цель переезжает на дорогой класс, и он тоже копится, а не ждёт удачи
+  g.businesses.forEach(b => { if (b.owner === me && !b.hq) b.kind = "bar"; });
+  g.unlocks[me].sniper = true;
+  g.funds[me] = g.TYPES.sniper.cost - 1;
+  const wait = new Set();
+  for (let i = 0; i < 40; i++) wait.add(g.aiPickHire(me));
+  ok("копя на дорогой класс, ИИ не берёт дешёвых бойцов",
+    [...wait].every(t => t === null), "выбирал: " + [...wait].join(", "));
+  g.funds[me] = g.TYPES.sniper.cost;
+  ok("накопив, ИИ берёт именно дорогой класс", g.aiPickHire(me) === "sniper",
+    "выбрал: " + g.aiPickHire(me));
+
+  // Выбрав долю дорогого класса, фракция копить перестаёт: он дорог и содержанием тоже
+  g.units.filter(u => u.team === me).forEach(u => { u.hp = 0; });
+  for (let i = 0; i < 2; i++) g.spawnUnit("sniper", sp.x, sp.y, me);
+  for (let i = 0; i < 3; i++) g.spawnUnit("shooter", sp.x, sp.y, me);
+  ok("выбрав долю дорогого класса, ИИ на него не копит",
+    g.armyCount(me, "sniper") / 5 >= g.RICH_SHARE && g.aiGoal(me) === null,
+    `доля ${Math.round(g.armyCount(me, "sniper") / 5 * 100)}%, цель ${JSON.stringify(g.aiGoal(me))}`);
+  const back = new Set();
+  for (let i = 0; i < 40; i++) back.add(g.aiPickHire(me));
+  ok("и найм возвращается к обычному", back.has("shooter"), "выбирал: " + [...back].join(", "));
+
+  // Бедная фракция не копит вовсе: цель дороже минуты дохода недостижима, а замерев
+  // без подкреплений, фракция потеряет точки быстрее, чем наберётся касса.
+  g.fInc[me] = 12; g.fUp[me] = 8;
+  ok("на недостижимую цель ИИ не копит", g.aiGoal(me) === null,
+    `поток ${g.fInc[me] - g.fUp[me]}/с, цель ${JSON.stringify(g.aiGoal(me))}`);
+  ok("минута дохода — общий масштаб накоплений", g.SAVE_SEC === 60);
+  ok("копят на классы дороже стрелка, от дорогого к дешёвому",
+    JSON.stringify(g.RICH_KEYS) === JSON.stringify(["undertaker", "sniper"]),
+    JSON.stringify(g.RICH_KEYS));
 }
 
 // ---------- армию ИИ держат деньги, а не число занятых точек ----------
