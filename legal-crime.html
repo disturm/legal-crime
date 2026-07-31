@@ -237,10 +237,12 @@ function alive(f){ const hq=factionHQ(f); return !!(hq && hq.owner===f); }   // 
 
 // pow — «сила» гангстера: от неё зависит скорость захвата заведения (тянет один сильнейший).
 // bribe — разовая взятка за открытие класса; вышибала открыт с самого начала.
+// sight — радиус обзора. Он ВСЕГДА >= range: иначе боец стрелял бы по тому,
+// чего его же фракция не видит, и туман разошёлся бы с правилом «сквозь дом не бьют».
 const TYPES={
-  bouncer:{name:"Вышибала",shape:"circle", hp:140,speed:70,range:26,dmg:26,rate:0.7,r:12,cost:150,up:1,pow:1,  bribe:0},
-  shooter:{name:"Стрелок", shape:"square", hp:80, speed:82,range:160,dmg:14,rate:0.45,r:10,cost:300,up:2,pow:1.5,bribe:350},
-  sniper:{ name:"Снайпер", shape:"triangle",hp:55, speed:66,range:300,dmg:200,rate:3.6,r:11,cost:550,up:3,pow:2.2,bribe:800},
+  bouncer:{name:"Вышибала",shape:"circle", hp:140,speed:70,range:26,dmg:26,rate:0.7,r:12,cost:150,up:1,pow:1,  bribe:0,  sight:200},
+  shooter:{name:"Стрелок", shape:"square", hp:80, speed:82,range:160,dmg:14,rate:0.45,r:10,cost:300,up:2,pow:1.5,bribe:350,sight:260},
+  sniper:{ name:"Снайпер", shape:"triangle",hp:55, speed:66,range:300,dmg:200,rate:3.6,r:11,cost:550,up:3,pow:2.2,bribe:800,sight:340},
 };
 // Открытые классы по фракциям: наём возможен только после взятки.
 // Стартовые бойцы выдаются в обход этого — подарок, а не наём.
@@ -255,7 +257,7 @@ const units=[]; const bullets=[]; const fx=[];
 function spawnUnit(type,x,y,team,role){
   const t=TYPES[type];
   const u={id:uid++,type,team,x,y,tx:x,ty:y,hp:t.hp,maxhp:t.hp,cd:0,target:null,order:null,
-    range:t.range,dmg:t.dmg,rate:t.rate,speed:t.speed,r:t.r,shape:t.shape,pow:t.pow,
+    range:t.range,dmg:t.dmg,rate:t.rate,speed:t.speed,r:t.r,shape:t.shape,pow:t.pow,sight:t.sight,
     combat:0,                                  // >0 — боец в боевой стойке (сам ведёт бой)
     color:TEAM[team].main, dark:TEAM[team].dark, shot:TEAM[team].shot,
     role:role||"attacker",homeBiz:null};
@@ -283,6 +285,7 @@ function initWorld(aiCount){
   ended=false; outcome=null; paused=false;
   selected.clear(); selecting=false; selectStart=null;
   enemyTimer=6; waveTimer=18; wave=0;
+  resetFog();                        // туман — под новую карту и новый список сторон
   // стартовый отряд одинаков у всех: ровно 1 вышибала + 1 стрелок у своего штаба.
   // Ставим их на точку захвата штаба — там гарантированно дорога.
   factions.forEach(team=>{
@@ -291,6 +294,7 @@ function initWorld(aiCount){
     spawnUnit("bouncer",sp.x-10,sp.y+6,team,"attacker");
     spawnUnit("shooter", sp.x+10,sp.y-6,team,"attacker");
   });
+  updateVision(1);                   // первый кадр не должен быть сплошным туманом
   const phq=playerHQ();
   if(phq) centerOn(phq.x,phq.y);
 }
@@ -422,7 +426,8 @@ function pickBiz(w){
 }
 function commandTo(w){
   if(selected.size===0) return;
-  const enemy=pickUnit(w,null);
+  let enemy=pickUnit(w,null);
+  if(enemy&&enemy.team!=="player"&&!canSee("player",enemy.x,enemy.y)) enemy=null;  // по невидимке приказа нет
   const biz=pickBiz(w);
   // сильнейший идёт первым: захват тянет один гангстер, ему и ближайшая точка
   const sel=[...selected].map(id=>units.find(u=>u.id===id)).filter(Boolean)
@@ -510,15 +515,18 @@ function enemyAI(dt){
         guard.order=null; guard.target=null; guard.captureBiz=null;
       }
     }
-    // каждый боец без цели идёт к ближайшей чужой точке; враг = любая другая фракция
-    const targets=businesses.filter(b=>b.owner!==me);
+    // Каждый боец без цели идёт к ближайшей чужой точке; враг = любая другая фракция.
+    // Владельца берём ПО ПАМЯТИ: неразведанная точка считается нейтральной, и ИИ
+    // может прийти «забирать ничьё» туда, где его ждёт оборона. Это и есть туман.
+    const targets=businesses.filter(b=>knownOwner(me,b)!==me);
     units.filter(u=>u.team===me&&!u.order).forEach(u=>{
       // гарнизон стережёт свою точку и не уходит в общий навал
       if(u.role==="garrison"){
         if(!u.homeBiz||u.homeBiz.owner!==me){ u.role="attacker"; }   // точку отняли — идём отбивать
         else{
           let ne=null,nd=200;
-          units.forEach(p=>{ if(p.team!==me&&p.hp>0){const d=Math.hypot(p.x-u.x,p.y-u.y); if(d<nd){nd=d;ne=p;}}});
+          units.forEach(p=>{ if(p.team!==me&&p.hp>0&&canSee(me,p.x,p.y)){
+            const d=Math.hypot(p.x-u.x,p.y-u.y); if(d<nd){nd=d;ne=p;}}});
           if(ne){ u.target=ne; u.order="attack"; setDest(u,ne.x,ne.y); return; }
           // гарнизон встаёт ровно в зону захвата своей точки — только там он мешает её увести
           const hb=u.homeBiz;
@@ -530,9 +538,10 @@ function enemyAI(dt){
           return;
         }
       }
-      // атаковать ближайшего чужого в радиусе видимости
+      // атаковать ближайшего чужого в радиусе видимости — и только того, кого фракция видит
       let ne=null,nd=260;
-      units.forEach(p=>{ if(p.team!==me&&p.hp>0){const d=Math.hypot(p.x-u.x,p.y-u.y); if(d<nd){nd=d;ne=p;}}});
+      units.forEach(p=>{ if(p.team!==me&&p.hp>0&&canSee(me,p.x,p.y)){
+        const d=Math.hypot(p.x-u.x,p.y-u.y); if(d<nd){nd=d;ne=p;}}});
       if(ne){ u.target=ne; u.order="attack"; setDest(u,ne.x,ne.y); return; }
       if(targets.length){ let bb=targets[0],bd=1e9;
         targets.forEach(b=>{const d=Math.hypot(b.x-u.x,b.y-u.y);if(d<bd){bd=d;bb=b;}});
@@ -664,12 +673,104 @@ function unstick(u){
 function nearestEnemy(u,maxd){
   let best=null,bd=Infinity;
   units.forEach(o=>{ if(o.team===u.team||o.hp<=0)return;
+    if(!canSee(u.team,o.x,o.y)) return;             // в тумане цель не берём: её фракция не видит
     const d=Math.hypot(o.x-u.x,o.y-u.y);
     if(d>=maxd) return;
     // снайпер целит в того, кто сам не ведёт бой: по бойцу в стойке его выстрел почти бесполезен
     const score=d+(u.type==="sniper"&&o.combat>0?400:0);
     if(score<bd && hasLOS(u.x,u.y,o.x,o.y)){bd=score;best=o;} });   // цель за домом не берём автоприцелом
   return best;
+}
+
+// ---------- Туман войны ----------
+// Модель на два состояния: город и расположение заведений известны всегда — это твой район.
+// Туман скрывает живое: чужих бойцов, пули, следы боя, актуального владельца точки и её захват.
+// Обзор режется теми же домами, что и стрельба (hasLOS), поэтому улицы работают коридорами.
+const SIGHT_BIZ=190, SIGHT_HQ=260;   // заведение и штаб дают обзор своему владельцу
+const FOG_SOFT=true;                 // мягкая кромка тумана; false — плоские кварталы
+const vis={};                        // vis[фракция] = Uint8Array(COLS*ROWS), 1 = клетка видна сейчас
+const losCache=new Map();            // «из клетки X с радиусом R видны такие-то клетки»
+
+// Карта внутри партии не меняется, а бойцы стоят только на дорогах — вариантов немного,
+// поэтому обзор из клетки считается один раз лучами и дальше берётся из кэша.
+// Кэш ОБЯЗАН чиститься в initWorld: иначе он будет светить сквозь дома новой карты.
+function visFrom(c,r,R){
+  const rad=Math.min(7,Math.round(R/TILE));
+  const key=(r*COLS+c)*8+rad;
+  let list=losCache.get(key);
+  if(list) return list;
+  const x0=c*TILE+TILE/2, y0=r*TILE+TILE/2;
+  // Проход 1 — дороги: луч тем же правилом, что и стрельба.
+  const road=new Set();
+  for(let dr=-rad;dr<=rad;dr++)for(let dc=-rad;dc<=rad;dc++){
+    const nc=c+dc, nr=r+dr;
+    if(!passable(nc,nr)) continue;
+    const x=nc*TILE+TILE/2, y=nr*TILE+TILE/2;
+    if(Math.hypot(x-x0,y-y0)>R) continue;
+    if(hasLOS(x0,y0,x,y)) road.add(nr*COLS+nc);
+  }
+  // Проход 2 — дома и заведения: лучом их не взять (он упирается в них же),
+  // поэтому стена видна, если видна примыкающая к ней дорога — «витрину видно с улицы».
+  // Те же четыре грани, что и у captureSpots: подойти и разглядеть — одно и то же.
+  const out=[...road];
+  for(let dr=-rad;dr<=rad;dr++)for(let dc=-rad;dc<=rad;dc++){
+    const nc=c+dc, nr=r+dr;
+    if(nc<0||nr<0||nc>=COLS||nr>=ROWS||passable(nc,nr)) continue;
+    const x=nc*TILE+TILE/2, y=nr*TILE+TILE/2;
+    if(Math.hypot(x-x0,y-y0)>R+TILE*0.5) continue;
+    if(road.has(nr*COLS+nc-COLS)||road.has(nr*COLS+nc+COLS)||
+       (nc>0&&road.has(nr*COLS+nc-1))||(nc<COLS-1&&road.has(nr*COLS+nc+1))) out.push(nr*COLS+nc);
+  }
+  list=Int32Array.from(out); losCache.set(key,list);
+  return list;
+}
+function markVision(f,x,y,R){
+  const v=vis[f]; if(!v) return;
+  let c=Math.floor(x/TILE), r=Math.floor(y/TILE);
+  if(!passable(c,r)){ const p=nearestPassable(c,r); if(!p) return; c=p[0]; r=p[1]; }
+  const list=visFrom(c,r,R);
+  for(let i=0;i<list.length;i++) v[list[i]]=1;
+}
+let fogTimer=0;
+function updateVision(dt){
+  fogTimer-=dt;
+  if(fogTimer>0) return;
+  fogTimer=0.12;                                  // 8 раз в секунду — глазу и ИИ хватает
+  for(const f of factions) if(vis[f]) vis[f].fill(0);
+  for(const u of units){ if(u.hp>0) markVision(u.team,u.x,u.y,u.sight); }
+  for(const b of businesses){
+    if(b.owner!=="neutral") markVision(b.owner,b.x,b.y,b.hq?SIGHT_HQ:SIGHT_BIZ);
+  }
+  // что фракция видит сейчас — то и запоминает; вне обзора остаётся вчерашняя картина
+  for(const b of businesses){
+    const k=b.r*COLS+b.c;
+    for(const f of factions) if(vis[f]&&vis[f][k]) b.memo[f]={owner:b.owner,capture:b.capture,capBy:b.capBy};
+  }
+}
+function canSee(f,x,y){
+  const c=Math.floor(x/TILE), r=Math.floor(y/TILE);
+  if(c<0||r<0||c>=COLS||r>=ROWS) return false;
+  return !!(vis[f]&&vis[f][r*COLS+c]);
+}
+// состояние заведения глазами фракции: видит — правда, не видит — последнее известное
+function bizView(f,b){ return canSee(f,b.x,b.y) ? b : (b.memo&&b.memo[f]) || b; }
+function knownOwner(f,b){ return bizView(f,b).owner; }
+// Сброс тумана под новую карту и новый список сторон. Только «на месте»: и vis, и losCache
+// пробрасываются в тесты по ссылке.
+function resetFog(){
+  for(const k in vis) delete vis[k];
+  factions.forEach(f=>vis[f]=new Uint8Array(COLS*ROWS));
+  losCache.clear();
+  fogTimer=0;
+  // Каждая фракция точно знает своё, чужое считает нейтральным, пока не разведает.
+  // Исключение — штабы: где сидят боссы, знают все, иначе цель партии («свали чужие
+  // штабы») теряется. Скрыт не сам штаб, а его перехват — он проявится только при свидетеле.
+  businesses.forEach(b=>{
+    b.memo={};
+    factions.forEach(f=>b.memo[f]= (b.owner===f||b.hq)
+      ? {owner:b.owner,capture:0,capBy:null}
+      : {owner:"neutral",capture:0,capBy:null});
+  });
 }
 
 // ---------- Обновление ----------
@@ -697,6 +798,7 @@ function update(dt){
 
   dt*=GAME_SPEED;   // отсюда — замедленный игровой мир
 
+  updateVision(dt); // видимость считаем ДО ИИ: он должен решать по свежему обзору
   enemyAI(dt);
 
   // юниты
@@ -706,9 +808,18 @@ function update(dt){
     if(u.combat>0) u.combat=Math.max(0,u.combat-dt);   // выход из боевой стойки
     // авто-цель
     let tgt=u.target && u.target.hp>0 ? u.target : null;
-    if(!tgt){ tgt=nearestEnemy(u, u.order==="attack"?9999:u.range+40); }
-    // приказ выполнен — освобождаем бойца, иначе он застрянет с мёртвой целью
-    if(u.order==="attack" && !tgt){ u.order=null; u.target=null; }
+    // цель ушла в туман — она больше не цель: запоминаем последнее место и идём туда
+    if(tgt && !canSee(u.team,tgt.x,tgt.y)){
+      if(u.order==="attack"){ u.hunt=4; setDest(u,tgt.x,tgt.y); }
+      u.target=null; tgt=null;
+    }
+    if(!tgt){ tgt=nearestEnemy(u, u.order==="attack"?Math.max(u.range+40,u.sight):u.range+40); }
+    // приказ выполнен — освобождаем бойца, иначе он застрянет с мёртвой целью.
+    // При потере из виду даём добежать до последнего места, но не дольше u.hunt секунд.
+    if(u.order==="attack" && !tgt){
+      u.hunt=(u.hunt||0)-dt;
+      if(u.hunt<=0){ u.order=null; u.target=null; u.hunt=0; }
+    }
     if(u.order==="capture" && (!u.captureBiz || u.captureBiz.owner===u.team)){ u.order=null; u.captureBiz=null; }
     u.repath=(u.repath||0)-dt;
     if(tgt){
@@ -915,7 +1026,9 @@ function draw(){
       captureSpots(b).forEach(s=>ctx.strokeRect(s.x-CAP_LAT,s.y-CAP_LAT,CAP_LAT*2,CAP_LAT*2));
       ctx.setLineDash([]);
     }
-    const col = b.owner==="neutral"?"#c9a24a":TEAM[b.owner].main;
+    // владелец и захват — глазами игрока: вне обзора рисуем последнее известное
+    const st=bizView("player",b);
+    const col = st.owner==="neutral"?"#c9a24a":TEAM[st.owner].main;
     ctx.fillStyle="#3a4657"; ctx.fillRect(x+3,y+3,TILE-6,TILE-6);
     ctx.strokeStyle=col; ctx.lineWidth=b.hq?5:3; ctx.strokeRect(x+4,y+4,TILE-8,TILE-8);
     // маркер-крыша
@@ -932,9 +1045,9 @@ function draw(){
       ctx.fillStyle="#dfe4ee"; ctx.font="10px Segoe UI"; ctx.fillText(b.name, x+TILE/2, y+TILE-8);
     }
     // прогресс захвата (если оспаривается) — цвет претендента
-    if(b.capBy && b.capture>0){
+    if(st.capBy && st.capture>0){
       ctx.fillStyle="rgba(0,0,0,.5)"; ctx.fillRect(x+8,y+TILE/2-4,TILE-16,6);
-      ctx.fillStyle=TEAM[b.capBy].main; ctx.fillRect(x+8,y+TILE/2-4,(TILE-16)*b.capture/100,6);
+      ctx.fillStyle=TEAM[st.capBy].main; ctx.fillRect(x+8,y+TILE/2-4,(TILE-16)*st.capture/100,6);
     }
   });
 
@@ -942,15 +1055,17 @@ function draw(){
   fx.forEach(f=>{ if(f.type==="ping"){ const k=f.t/f.max; ctx.strokeStyle=f.color; ctx.globalAlpha=1-k; ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(f.x,f.y,6+k*22,0,7); ctx.stroke(); ctx.globalAlpha=1; }});
 
-  // юниты
-  units.forEach(u=>drawUnit(u));
+  // юниты — свои видны всегда, чужие только в обзоре
+  units.forEach(u=>{ if(u.team==="player"||canSee("player",u.x,u.y)) drawUnit(u); });
 
   // пули
-  bullets.forEach(p=>{ ctx.strokeStyle=p.color; ctx.lineWidth= p.dmg>40?2.5:1.5;
+  bullets.forEach(p=>{ if(!canSee("player",p.x,p.y)) return;
+    ctx.strokeStyle=p.color; ctx.lineWidth= p.dmg>40?2.5:1.5;
     ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x-p.vx*0.02,p.y-p.vy*0.02); ctx.stroke(); });
 
-  // прочие эффекты
+  // прочие эффекты — следы чужого боя за туманом не видны
   fx.forEach(f=>{
+    if(!canSee("player",f.x,f.y)) return;
     if(f.type==="hit"){ const k=f.t/f.max; ctx.fillStyle=f.color; ctx.globalAlpha=1-k;
       for(let i=0;i<4;i++){const a=i*1.6+k;ctx.fillRect(f.x+Math.cos(a)*k*10,f.y+Math.sin(a)*k*10,2,2);} ctx.globalAlpha=1; }
     if(f.type==="muzzle"){ ctx.fillStyle=f.color; ctx.globalAlpha=1-f.t/f.max;
@@ -960,6 +1075,23 @@ function draw(){
     if(f.type==="death"){ const k=f.t/f.max; ctx.fillStyle=f.color; ctx.globalAlpha=(1-k)*.6;
       ctx.beginPath(); ctx.arc(f.x,f.y,4+k*10,0,7); ctx.fill(); ctx.globalAlpha=1; }
   });
+
+  // Туман — поверх мира, но под интерфейсом. Затемнение слабое: город и так известен,
+  // задача слоя — отделить «здесь мои глаза» от «здесь я вижу вчерашний день».
+  // Идёт одним path и одним fill: blur применяется к слою целиком, а не к каждой клетке.
+  const vp=vis.player;
+  if(vp){
+    ctx.filter = FOG_SOFT?"blur(7px)":"none";
+    ctx.fillStyle="rgba(9,11,16,.45)";
+    ctx.beginPath();
+    // на клетку шире экрана — иначе размытие оставляет светлую кайму по краю
+    for(let r=r0-1;r<=r1;r++)for(let c=c0-1;c<=c1;c++){
+      if(c<0||r<0||c>=COLS||r>=ROWS) ctx.rect(c*TILE,r*TILE,TILE,TILE);      // за краем города — туман
+      else if(!vp[r*COLS+c]) ctx.rect(c*TILE,r*TILE,TILE,TILE);
+    }
+    ctx.fill();
+    ctx.filter="none";
+  }
 
   // рамка выделения
   if(selecting&&selectStart){ ctx.strokeStyle="rgba(232,193,74,.9)"; ctx.fillStyle="rgba(232,193,74,.1)"; ctx.lineWidth=1.5/cam.zoom;
@@ -987,10 +1119,19 @@ function drawMinimap(){
   ctx.fillStyle="#242b38";
   for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++) if(grid[r][c]===1)
     ctx.fillRect(m.x+c*TILE*sx, m.y+r*TILE*sy, TILE*sx+.5, TILE*sy+.5);
+  // туман — до точек, чтобы юниты и заведения по нему не гасли (blur здесь не нужен: смажет всё)
+  const vp=vis.player;
+  if(vp){
+    ctx.fillStyle="rgba(9,12,17,.5)";
+    for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++) if(!vp[r*COLS+c])
+      ctx.fillRect(m.x+c*TILE*sx, m.y+r*TILE*sy, TILE*sx+.5, TILE*sy+.5);
+  }
   // юниты — точками, бизнесы — квадратами поверх
-  units.forEach(u=>{ ctx.fillStyle=u.color; ctx.fillRect(m.x+u.x*sx-1,m.y+u.y*sy-1,2.4,2.4); });
+  units.forEach(u=>{ if(u.team!=="player"&&!canSee("player",u.x,u.y)) return;
+    ctx.fillStyle=u.color; ctx.fillRect(m.x+u.x*sx-1,m.y+u.y*sy-1,2.4,2.4); });
   businesses.forEach(b=>{
-    ctx.fillStyle=b.owner==="neutral"?"#c9a24a":TEAM[b.owner].main;
+    const st=bizView("player",b);
+    ctx.fillStyle=st.owner==="neutral"?"#c9a24a":TEAM[st.owner].main;
     const s=b.hq?7:5;
     ctx.fillRect(m.x+b.x*sx-s/2,m.y+b.y*sy-s/2,s,s);
     ctx.strokeStyle=b.hq?"#fff":"rgba(0,0,0,.6)"; ctx.lineWidth=1; ctx.strokeRect(m.x+b.x*sx-s/2,m.y+b.y*sy-s/2,s,s);

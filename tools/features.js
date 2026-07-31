@@ -147,5 +147,72 @@ function ok(name, cond, extra) {
     `вышибала ${one.toFixed(1)}с, снайпер ${sniper.toFixed(1)}с`);
 }
 
+// ---------- туман войны: обзор режется домами, память о чужих точках ----------
+{
+  const g = loadGame();
+  g.reset(2);
+  const T = g.TILE, COLS = g.COLS, ROWS = g.ROWS;
+  const seen = f => { let n = 0; const v = g.vis[f]; for (let i = 0; i < v.length; i++) n += v[i]; return n; };
+
+  ok("sight >= range у каждого класса", Object.keys(g.TYPES).every(t => g.TYPES[t].sight >= g.TYPES[t].range),
+    Object.keys(g.TYPES).map(t => `${t} ${g.TYPES[t].sight}/${g.TYPES[t].range}`).join(", "));
+
+  const u = g.units.find(x => x.team === "player");
+  ok("свой боец видит клетку под собой", g.canSee("player", u.x, u.y));
+  ok("обзор — не вся карта", seen("player") < COLS * ROWS * 0.35,
+    `видно ${seen("player")} из ${COLS * ROWS} клеток`);
+
+  // дом в глубине квартала лучом не берётся: видна только та стена, к которой примыкает
+  // просматриваемая дорога. Ищем такой дом среди клеток вокруг бойца.
+  const uc = Math.floor(u.x / T), ur = Math.floor(u.y / T);
+  let deep = null;
+  for (let dr = -2; dr <= 2 && !deep; dr++) for (let dc = -2; dc <= 2 && !deep; dc++) {
+    const c = uc + dc, r = ur + dr;
+    if (c < 1 || r < 1 || c >= COLS - 1 || r >= ROWS - 1) continue;
+    if (g.passable(c, r)) continue;
+    const walled = !g.passable(c - 1, r) && !g.passable(c + 1, r) &&
+                   !g.passable(c, r - 1) && !g.passable(c, r + 1);
+    if (walled) deep = [c, r];
+  }
+  ok("дом без выхода на дорогу не виден", !deep || !g.canSee("player", deep[0] * T + T / 2, deep[1] * T + T / 2),
+    deep ? `клетка ${deep}` : "такого дома рядом не нашлось");
+
+  // чужие бойцы на старте — за туманом
+  const far = g.units.filter(x => x.team !== "player");
+  ok("чужие бойцы на старте не видны", far.every(p => !g.canSee("player", p.x, p.y)),
+    `видно ${far.filter(p => g.canSee("player", p.x, p.y)).length} из ${far.length}`);
+
+  // чужие точки считаются нейтральными, пока их не разведали; штабы — исключение
+  const enemyBiz = g.businesses.filter(b => b.owner !== "player" && b.owner !== "neutral" && !b.hq);
+  ok("неразведанная чужая точка считается нейтральной",
+    enemyBiz.length > 0 && enemyBiz.every(b => g.knownOwner("player", b) === "neutral"),
+    `чужих не-штабов ${enemyBiz.length}`);
+  ok("чужой штаб известен всем — цель партии не прячется",
+    g.factions.every(f => g.knownOwner("player", g.factionHQ(f)) === f));
+
+  // подвели бойца вплотную — владелец проявился
+  const spy = enemyBiz[0];
+  if (spy) {
+    const s = g.captureSpots(spy)[0] || { x: spy.x, y: spy.y };
+    g.spawnUnit("bouncer", s.x, s.y, "player");
+    g.updateVision(1);
+    ok("разведанная точка показывает настоящего владельца",
+      g.knownOwner("player", spy) === spy.owner, `память ${g.knownOwner("player", spy)}, факт ${spy.owner}`);
+  }
+}
+
+// ---------- туман сбрасывается вместе с картой ----------
+{
+  const g = loadGame();
+  const share = () => { const v = g.vis.player; let n = 0; for (let i = 0; i < v.length; i++) n += v[i]; return n / v.length; };
+  g.reset(2);
+  const first = share();
+  g.reset(2);                                    // новая карта — кэш лучей обязан пересчитаться
+  ok("после новой партии обзор снова узкий", share() < 0.35,
+    `было ${(first * 100).toFixed(1)}%, стало ${(share() * 100).toFixed(1)}%`);
+  ok("память о точках пересоздана под новую карту",
+    g.businesses.every(b => b.memo && g.factions.every(f => b.memo[f])));
+}
+
 console.log(fails ? `\nПРОВАЛЕНО проверок: ${fails}` : "\nвсе проверки пройдены");
 process.exit(fails ? 1 : 0);

@@ -18,7 +18,8 @@ const BRIDGE = `
   TYPES, TEAM, grid, TILE, COLS, ROWS, unlocks,
   update, draw, setDest, spawnUnit, passable, findPath,
   hasLOS, reset: initWorld, playerHQ, factionHQ,
-  selectBuy, captureSpots, inCapZone, captureBusinesses, fire, commandTo
+  selectBuy, captureSpots, inCapZone, captureBusinesses, fire, commandTo,
+  vis, canSee, knownOwner, bizView, updateVision, visFrom
 };`;
 
 function stubCtx() {

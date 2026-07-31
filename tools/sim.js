@@ -28,7 +28,9 @@ function play(g, mode, aiCount) {
 
     const my = g.units.filter(u => u.team === "player");
     const free = my.filter(u => !u.captureBiz || u.captureBiz.owner === "player");
-    const targets = g.businesses.filter(b => b.owner !== "player");
+    // Цели — по памяти игрока, а не по факту: с туманом войны бот обязан играть
+    // в тех же потёмках, что и ИИ, иначе замер сложности превращается в замер читерства.
+    const targets = g.businesses.filter(b => g.knownOwner("player", b) !== "player");
     if (!targets.length) continue;
 
     if (mode === "bot") {                       // слабая стратегия: всё в одну точку кучей
