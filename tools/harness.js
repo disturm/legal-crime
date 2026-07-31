@@ -34,7 +34,7 @@ const BRIDGE = `
   update, draw, setDest, spawnUnit, passable, findPath,
   hasLOS, reset: initWorld, playerHQ, factionHQ,
   selectBuy, captureSpots, inCapZone, captureBusinesses, fire, commandTo, pickBiz,
-  vis, canSee, knownOwner, bizView, updateVision, visFrom, SIGHT_BIZ, SIGHT_HQ,
+  vis, canSee, knownOwner, knownKind, bizView, updateVision, visFrom, SIGHT_BIZ, SIGHT_HQ,
   funds, fInc, fUp, tickEconomy,
   UPGRADES, UP_KEYS, MARKET_KEYS, MARKET_MIN, aiFavor, CAP_UPGRADED,
   marketCount, marketSize, marketPct, bizIncome, bizIncomeOf, bizBaseIncome, bizTag, upIncomeAt,
