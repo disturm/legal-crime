@@ -1,7 +1,7 @@
 // Регрессия на механики, которые баланс-сим не ловит: стартовый отряд, доход штаба,
 // взятки за классы, урон снайпера по боевой стойке и правила зоны захвата.
 //   node tools/features.js
-const { loadGame } = require("./harness");
+const { loadGame, GAME } = require("./harness");
 
 let fails = 0;
 function ok(name, cond, extra) {
@@ -367,8 +367,13 @@ function ok(name, cond, extra) {
   const plain = g.businesses.filter(b => !b.hq);
   ok("базовый доход остался 4..9", plain.every(b => b.income >= 4 && b.income <= 9));
   ok("на старте никто не улучшен", g.businesses.every(b => b.kind === null));
-  ok("улучшение всегда выгоднее базы: X > 9 у всех типов",
-    g.UP_KEYS.every(k => g.UPGRADES[k].X > 9), g.UP_KEYS.map(k => `${k} X=${g.UPGRADES[k].X}`).join(", "));
+  // Инвариант держится на ДОХОДНЫХ типах. Тренировочный центр из них выведен пометкой
+  // rally, и списки не перечисляются руками — иначе они разъедутся при новом типе.
+  ok("улучшение всегда выгоднее базы: X > 9 у всех доходных типов",
+    g.MARKET_KEYS.length > 0 && g.MARKET_KEYS.every(k => g.UPGRADES[k].X > 9),
+    g.MARKET_KEYS.map(k => `${k} X=${g.UPGRADES[k].X}`).join(", "));
+  ok("рыночные типы выведены из пометки, а не перечислены",
+    g.MARKET_KEYS.join() === g.UP_KEYS.filter(k => !g.UPGRADES[k].rally).join());
   ok("пустой рынок меряется полом 10", g.marketSize("bar") === 10 && g.marketPct("player", "bar") === 0);
 
   // 5 своих баров из 12 построенных: пол больше не действует, доля округляется до целых
@@ -565,6 +570,81 @@ function ok(name, cond, extra) {
     w.businesses.filter(b => b.owner === "ai1" && b.kind === "strip").length === 2);
 }
 
+// ---------- тренировочный центр: точка сбора найма ----------
+// Единственное заведение, которое не про доход, а про логистику: его проверяем
+// отдельно от рынка — по расходу, по сбору и по тому, что ИИ его не строит.
+{
+  const g = loadGame();
+  g.reset(1);
+  const hq = g.playerHQ();
+  // берём точку ПОДАЛЬШЕ от штаба: иначе «боец вышел у центра, а не у штаба» ничего не значит
+  let mine = null, md = -1;
+  for (const b of g.businesses) {
+    if (b.hq) continue;
+    const d = Math.hypot(b.x - hq.x, b.y - hq.y);
+    if (d > md) { md = d; mine = b; }
+  }
+  mine.owner = "player";
+  g.money = 5000;
+
+  ok("сбор по умолчанию в штабе", g.rallyPoint("player") === hq);
+  ok("простая точка сбор не держит", !g.canRally("player", mine) && !g.setRally("player", mine));
+
+  const cash = g.money;
+  ok("центр покупается как улучшение", g.buyUpgrade("player", mine, "gym") &&
+    mine.kind === "gym" && g.money === cash - g.UPGRADES.gym.cost);
+  ok("центр не даёт дохода", g.bizIncome(mine) === 0 && g.bizBaseIncome(mine) === 0);
+  ok("центр стоит $10/с", g.bizUpkeep(mine) === 10);
+  ok("на плитке у центра расход, а не $0", g.bizTag(mine) === "−$10", g.bizTag(mine));
+  g.tickEconomy(0.001);
+  ok("содержание центра попало в расход фракции", g.fUp.player >= 10,
+    `расход ${g.fUp.player}`);
+
+  ok("сбор переносится на свой центр", g.setRally("player", mine) && g.rallyPoint("player") === mine);
+  const before = g.units.length;
+  g.selectBuy("bouncer");
+  const fresh = g.units[g.units.length - 1];
+  ok("наём идёт в точку сбора, а не в штаб", g.units.length === before + 1 &&
+    Math.hypot(fresh.x - mine.x, fresh.y - mine.y) < Math.hypot(fresh.x - hq.x, fresh.y - hq.y),
+    `до центра ${Math.round(Math.hypot(fresh.x - mine.x, fresh.y - mine.y))}, ` +
+    `до штаба ${Math.round(Math.hypot(fresh.x - hq.x, fresh.y - hq.y))}`);
+
+  ok("сбор возвращается в штаб той же кнопкой", g.setRally("player", null) &&
+    g.rallyPoint("player") === hq);
+  const back = g.units.length;
+  g.selectBuy("bouncer");
+  const home = g.units[g.units.length - 1];
+  ok("после возврата наём снова у штаба", g.units.length === back + 1 &&
+    Math.hypot(home.x - hq.x, home.y - hq.y) < Math.hypot(home.x - mine.x, home.y - mine.y));
+
+  // разбор центра и его потеря обязаны сами возвращать сбор: хук в demolish и в захвате
+  // легко забыть, поэтому rallyPoint проверяет зал по факту на каждом обращении
+  g.setRally("player", mine);
+  ok("центр разбирается, как и любое заведение", g.canDemolish("player", mine) &&
+    g.demolish("player", mine) && mine.kind === null);
+  ok("разобранный центр возвращает сбор в штаб", g.rallyPoint("player") === hq);
+  g.buyUpgrade("player", mine, "gym"); g.setRally("player", mine);
+  mine.owner = "ai1";
+  ok("отбитый врагом центр возвращает сбор в штаб", g.rallyPoint("player") === hq);
+  ok("чужой центр точкой сбора не назначить", !g.canRally("player", mine) && !g.setRally("player", mine));
+}
+
+// ИИ и бот в сим тренировочный центр не строят: подкрепления ИИ и так выходят
+// у случайной СВОЕЙ точки, то есть сбор у него распределён даром. Пустить его
+// в жадность по «доходу на доллар» — значит дать ИИ денежную дыру, которой у игрока нет.
+{
+  const g = loadGame();
+  g.reset(3);
+  ok("любимый тип ИИ — только доходный",
+    Object.values(g.aiFavor).every(k => g.MARKET_KEYS.includes(k)),
+    JSON.stringify(g.aiFavor));
+  g.businesses.forEach(b => { if (!b.hq) b.owner = "ai1"; });
+  for (let i = 0; i < 40; i++) { g.funds.ai1 = 9000; g.aiUpgrade("ai1"); }
+  ok("ИИ не строит тренировочных центров",
+    g.businesses.every(b => b.kind !== "gym"),
+    g.businesses.filter(b => b.kind === "gym").length + " шт");
+}
+
 // ---------- панель улучшений ----------
 {
   const g = loadGame();
@@ -600,6 +680,54 @@ function ok(name, cond, extra) {
   ok("панель: потерянная точка снимает выбор", g.selBiz === null);
 }
 
+// ---------- панель: кнопка точки сбора ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  g.money = 5000; g.update(0.001);
+  ok("панель: без выбора переносить сбор некуда",
+    g.els.btnRally.disabled === true && g.els.costRally.textContent === "—");
+  // штаб — точка сбора по умолчанию, но отдельной кнопки у него нет: сбор и так его
+  g.selBiz = g.playerHQ(); g.update(0.001);
+  ok("панель: у штаба кнопка сбора выключена и подписана «в штабе»",
+    g.els.btnRally.disabled === true && g.els.costRally.textContent === "в штабе",
+    g.els.costRally.textContent);
+  const mine = g.businesses.find(b => b.owner === "neutral" && !b.hq);
+  mine.owner = "player";
+  g.selBiz = mine; g.update(0.001);
+  ok("панель: простая точка сбор не держит",
+    g.els.btnRally.disabled === true && g.els.costRally.textContent === "нужен зал",
+    g.els.costRally.textContent);
+  g.playerUpgrade("gym"); g.update(0.001);
+  ok("панель: у своего центра кнопка сбора включена",
+    g.els.btnRally.disabled === false && g.els.costRally.textContent === "сюда" &&
+    /Перенести/.test(g.els.rallyLabel.textContent), g.els.rallyLabel.textContent);
+  ok("панель: у центра в шапке расход, а не доход",
+    /−\$10\/с/.test(g.els.upSel.textContent), g.els.upSel.textContent);
+  g.playerRally(); g.update(0.001);
+  ok("панель: кнопка перенесла сбор и стала обратной",
+    g.rallyPoint("player") === mine && g.els.costRally.textContent === "здесь" &&
+    /Вернуть/.test(g.els.rallyLabel.textContent), g.els.rallyLabel.textContent);
+  g.playerRally(); g.update(0.001);
+  ok("панель: та же кнопка вернула сбор в штаб",
+    g.rallyPoint("player") === g.playerHQ() && g.els.costRally.textContent === "сюда");
+  // рынок — только доходные типы: у зала доли нет, и строки о нём быть не должно
+  ok("панель: центра нет среди строк рынка",
+    !new RegExp(g.UPGRADES.gym.name).test(g.els.market.innerHTML), g.els.market.innerHTML);
+}
+
+// ---------- разметка: кнопка на каждый тип заведения ----------
+// els доказывает только то, что код СПРОСИЛ элемент; сама разметка пишется руками,
+// и забытая кнопка вылезла бы уже в браузере. Поэтому читаем HTML.
+{
+  const html = require("fs").readFileSync(GAME, "utf8");
+  const g = loadGame();
+  const cap = k => k[0].toUpperCase() + k.slice(1);
+  const miss = g.UP_KEYS.filter(k => !html.includes(`id="buyUp${cap(k)}"`) ||
+                                     !html.includes(`id="costUp${cap(k)}"`));
+  ok("у каждого типа заведения своя кнопка в разметке", miss.length === 0, "нет: " + miss.join(", "));
+}
+
 // ---------- контекстная панель у самого заведения ----------
 // Улучшение и снос живут не в правом меню, а в панельке, которая стоит вплотную
 // к выбранной точке. Значит, проверять надо не только состояние кнопок, но и место.
@@ -625,7 +753,8 @@ function ok(name, cond, extra) {
   ok("панелька: с выбором показана", panel.style.display === "block");
   // сбоку от плитки (отступ = полклетки на зуме + 12), по вертикали — серединой к точке
   ok("панелька: стоит вплотную к своей точке",
-    Math.abs(left - (s.x + g.TILE / 2 + 12)) < 2 && Math.abs(top + 107 - s.y) < 4, `${left},${top}`);
+    Math.abs(left - (s.x + g.TILE / 2 + 12)) < 2 && Math.abs(top + g.BIZ_PANEL_H / 2 - s.y) < 4,
+    `${left},${top}`);
   g.cam.x -= 200; g.update(0.001);
   ok("панелька: едет вместе с камерой",
     Math.abs(parseFloat(panel.style.left) - (left + 200)) < 2,
@@ -639,12 +768,12 @@ function ok(name, cond, extra) {
   g.cam.zoom = 1; g.cam.x = mine.x - 1150; g.cam.y = mine.y - 400; g.update(0.001);
   const s3 = g.w2s(mine.x, mine.y);
   ok("панелька: у правого края уходит влево от точки",
-    parseFloat(panel.style.left) + 238 <= s3.x - g.TILE / 2, `${panel.style.left} при x=${s3.x}`);
+    parseFloat(panel.style.left) + g.BIZ_PANEL_W <= s3.x - g.TILE / 2, `${panel.style.left} при x=${s3.x}`);
   // миникарта — тоже интерфейс: под панелью она бы не кликалась
   g.cam.x = mine.x - 60; g.cam.y = mine.y - 740; g.update(0.001);   // точка в левом нижнем углу
   const mm = g.mmRect();
   ok("панелька: миникарту не накрывает",
-    parseFloat(panel.style.top) + 214 <= mm.y - 5 || parseFloat(panel.style.left) > mm.x + mm.w,
+    parseFloat(panel.style.top) + g.BIZ_PANEL_H <= mm.y - 5 || parseFloat(panel.style.left) > mm.x + mm.w,
     `${panel.style.left},${panel.style.top} при миникарте ${mm.x},${mm.y}`);
   // на паузе update не идёт — закрытие и выбор обязаны действовать сразу
   g.setSelBiz(null);
