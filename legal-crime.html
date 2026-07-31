@@ -127,9 +127,16 @@
       <span style="flex:1">Решение проблем<small>пистолет · доля рынка не важна: доход сразу высокий и не растёт</small></span>
       <span class="cost" id="costUpFixer">$600</span>
     </button>
+    <button class="buy" id="btnDemolish">
+      <svg class="ik" viewBox="0 0 16 16"><path d="M10.6 1.1l4.3 4.3-2.3 2.3-4.3-4.3zM8.9 5.2l1.9 1.9-7.1 7.1-1.9-1.9z"/></svg>
+      <span style="flex:1">Снести заведение<small>кувалда · точка снова простая; деньги не возвращаются</small></span>
+      <span class="cost" id="costDemolish">—</span>
+    </button>
     <div style="font-size:11px;color:var(--dim);line-height:1.4">
-      Улучшение <b style="color:var(--green)">необратимо</b> и одно на точку; штаб не улучшается.
-      Улучшенная точка берётся дольше, но достаётся захватчику вместе с заведением.
+      Одно заведение на точку; штаб не улучшается. Сменить тип можно только
+      <b style="color:var(--green)">через снос</b> — вложенное сгорает, новое покупается за полную цену.
+      Улучшенная точка берётся дольше, но достаётся захватчику вместе с заведением;
+      снесённая не достаётся никому — и берётся снова быстро.
     </div>
 
     <div class="grp-title">Твой рынок</div>
@@ -691,6 +698,17 @@ function buyUpgrade(f,b,kind){
   b.kind=kind;                 // улучшение остаётся на заведении и переходит к захватчику
   return true;
 }
+// Снос — обратная сторона улучшения и ЕДИНСТВЕННЫЙ способ сменить тип заведения:
+// buyUpgrade по-прежнему требует чистую точку, так что «перестроить» = снести и купить заново.
+// Деньги за старое НЕ возвращаются: смена типа стоит полной цены нового заведения и потому
+// остаётся выбором, а не бесплатной подстройкой под долю рынка. Ворота общие для игрока
+// и ИИ — как у улучшений и взяток.
+function canDemolish(f,b){ return !!(b && b.owner===f && !b.hq && b.kind); }
+function demolish(f,b){
+  if(!canDemolish(f,b)) return false;
+  b.kind=null;   // точка снова простая: базовый доход и обычная (быстрая) скорость захвата
+  return true;
+}
 
 // Открытые классы по фракциям: наём возможен только после взятки.
 // Стартовые бойцы выдаются в обход этого — подарок, а не наём.
@@ -961,6 +979,19 @@ function playerUpgrade(kind){
   ping(b.x,b.y,"#e8c14a");
   refreshUpgradeUI();
 }
+// снос по кнопке панели: те же ворота, что у ИИ, плюс подсказки — как в playerUpgrade
+function playerDemolish(){
+  const b=selBiz;
+  if(!b){ toast("Сначала выбери своё заведение — ЛКМ по нему"); return; }
+  if(b.owner!=="player"){ toast("Это не твоя точка"); return; }
+  if(b.hq){ toast("Штаб не улучшается — и сносить в нём нечего"); return; }
+  if(!b.kind){ toast("«"+b.name+"» и так простое заведение"); return; }
+  const was=UPGRADES[b.kind].name;
+  demolish("player",b);
+  toast(was+" снесён — «"+b.name+"» снова даёт $"+b.income+"/с. Деньги не возвращаются");
+  ping(b.x,b.y,"#8b90a0");
+  refreshUpgradeUI();
+}
 document.getElementById("optEdge").onchange=e=>{
   edgeScrollOn=e.target.checked;
   toast(edgeScrollOn?"Прокрутка краями включена":"Прокрутка краями выключена");
@@ -982,6 +1013,7 @@ function refreshBuyUI(){
 }
 function upId(k){ return k[0].toUpperCase()+k.slice(1); }   // bar → Bar, undertaker → Undertaker
 UP_KEYS.forEach(k=>{ document.getElementById("buyUp"+upId(k)).onclick=()=>playerUpgrade(k); });
+document.getElementById("btnDemolish").onclick=()=>playerDemolish();
 function refreshUpgradeUI(){
   if(selBiz && selBiz.owner!=="player") selBiz=null;         // точку отняли — выбор снят
   const b=selBiz;
@@ -996,6 +1028,10 @@ function refreshUpgradeUI(){
     if(cost) cost.textContent="$"+UPGRADES[k].cost;
     el.disabled = !(b && canUpgrade("player",b) && funds.player>=UPGRADES[k].cost);
   });
+  // Снос доступен ровно тогда, когда улучшение уже стоит: кнопки взаимно исключают друг друга.
+  // В колонке цены — что именно снесут, а не сумма: денег снос не стоит и не возвращает.
+  document.getElementById("btnDemolish").disabled = !canDemolish("player",b);
+  document.getElementById("costDemolish").textContent = (b&&b.kind) ? UPGRADES[b.kind].short : "—";
   // Рынок: только СВОЯ доля и размер рынка. Чужие доли — это разведка, а не витрина.
   document.getElementById("market").innerHTML = UP_KEYS.map(k=>
     `<div>${UPGRADES[k].name}: <b style="color:var(--txt)">${marketPct("player",k)}%</b> · рынок ${marketSize(k)}</div>`).join("");
@@ -1015,10 +1051,24 @@ function resetAiFavor(){
   const start=Math.floor(Math.random()*UP_KEYS.length);
   aiTeams().forEach((f,i)=>{ aiFavor[f]=UP_KEYS[(start+i)%UP_KEYS.length]; });
 }
+// Насколько новый тип должен обгонять старый по доходу, чтобы ИИ снёс готовое заведение.
+// Снос без возврата, поэтому запас нужен большой: при перевесе меньше этого ИИ жёг бы
+// кассу, перестраивая точки туда-сюда вслед за дрожанием доли рынка.
+const AI_SWAP_GAIN=1.4;
+// Строить негде — но касса полна. Тогда ИИ сносит САМОЕ СЛАБОЕ своё заведение и ставит
+// на его месте прибыльное. Порядок «сначала чистые точки, потом перестройка» держит
+// перестройку редкой: пока есть куда вложиться даром, деньги идут туда.
+function aiSwap(me,kind){
+  const mine=businesses.filter(b=>canDemolish(me,b) && b.kind!==kind);
+  if(!mine.length) return;
+  let worst=mine[0],wv=1e9;
+  mine.forEach(b=>{ const v=bizIncomeOf(me,b); if(v<wv){ wv=v; worst=b; } });
+  if(upIncomeAt(me,kind,1) < wv*AI_SWAP_GAIN) return;
+  demolish(me,worst);
+  buyUpgrade(me,worst,kind);   // денег хватило ещё до сноса — точка не останется голой
+}
 function aiUpgrade(me){
   const cash=funds[me]||0;
-  const own=businesses.filter(b=>canUpgrade(me,b));
-  if(!own.length) return;
   let kind=null;
   const fav=aiFavor[me];
   if(fav && cash>=UPGRADES[fav].cost+AI_UP_RESERVE) kind=fav;
@@ -1031,6 +1081,8 @@ function aiUpgrade(me){
     }
   }
   if(!kind) return;
+  const own=businesses.filter(b=>canUpgrade(me,b));
+  if(!own.length){ aiSwap(me,kind); return; }   // строить негде — можно перестроить
   // вкладываемся в тыл: точка у своего штаба реже переходит из рук в руки
   const hq=factionHQ(me);
   let tgt=own[0];

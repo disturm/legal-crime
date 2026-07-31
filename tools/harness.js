@@ -30,6 +30,7 @@ const BRIDGE = `
   UPGRADES, UP_KEYS, MARKET_MIN, aiFavor, CAP_UPGRADED,
   marketCount, marketSize, marketPct, bizIncome, bizIncomeOf, bizBaseIncome, upIncomeAt,
   canUpgrade, buyUpgrade, playerUpgrade, aiUpgrade,
+  canDemolish, demolish, playerDemolish, aiSwap, AI_SWAP_GAIN,
   get musicOn(){return musicOn}, get sfxOn(){return sfxOn},
   get actx(){return actx},   // в тесте им двигают currentTime: бюджет голосов и планировщик считают по нему
   SHOTS, sfx, setAudio, toggleMute, audioInit, audioResume, audioDuck,

@@ -106,6 +106,19 @@ function play(g, mode, aiCount, seed) {
         let tgt = plain[0], td = 1e9;
         plain.forEach(b => { const d = Math.hypot(b.x - h.x, b.y - h.y); if (d < td) { td = d; tgt = b; } });
         g.buyUpgrade("player", tgt, kind);
+      } else if (kind) {
+        // Строить негде — перестраиваем самое слабое, по тому же правилу и тому же порогу,
+        // что и ИИ: снос — часть нормальной игры, и модель игрока обязана им пользоваться,
+        // иначе sim мерит не сложность, а незнание механики одной из сторон.
+        const built = mine.filter(b => g.canDemolish("player", b) && b.kind !== kind);
+        if (built.length) {
+          let worst = built[0], wv = 1e9;
+          built.forEach(b => { const v = g.bizIncomeOf("player", b); if (v < wv) { wv = v; worst = b; } });
+          if (g.upIncomeAt("player", kind, 1) >= wv * g.AI_SWAP_GAIN) {
+            g.demolish("player", worst);
+            g.buyUpgrade("player", worst, kind);
+          }
+        }
       }
     }
 
