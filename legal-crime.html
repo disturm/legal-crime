@@ -775,11 +775,24 @@ const TYPES={
   // прежние 140 HP и dmg 26 — и он снова станет лучшим бойцом в игре, причём самым дешёвым.
   bouncer:{name:"Вышибала",shape:"circle", hp:80, speed:70,range:26,dmg:6, rate:0.7,r:12,cost:120,up:2,pow:1,  bribe:0,  sight:200},
   shooter:{name:"Стрелок", shape:"square", hp:80, speed:82,range:160,dmg:14,rate:0.45,r:10,cost:360,up:6,pow:1.5,bribe:360,sight:260},
-  sniper:{ name:"Снайпер", shape:"triangle",hp:55, speed:66,range:300,dmg:200,rate:3.6,r:11,cost:900,up:15,pow:2.2,bribe:900,sight:340},
+  // Снайпер СНАЧАЛА ЦЕЛИТСЯ (aim секунд), и только потом стреляет — зато тогда попадает
+  // всегда (hitscan: урон считается в момент выстрела, пуля рисуется трассером).
+  // Прицеливание — единственное окно, в котором его можно сбить: цель ушла за угол,
+  // разорвала дистанцию или он сам сменил цель — секунда идёт заново.
+  // range 400 — это НЕ «дальше стало дальше», а плата за aim: секунда прицела съедает
+  // ровно «скорость цели × 1» дистанции (гробовщик 78, стрелок 82). При прежних 300
+  // окно против гробовщика (300-200 = 100 px, 1.3 с хода) прицел выедал почти целиком,
+  // и контригра «снять на подходе» переставала работать. Держите зазор
+  // range - undertaker.range >= undertaker.speed * (aim + 1.3).
+  // sight 500 = range + 100: цель надо увидеть заметно раньше, чем начинаешь тратить
+  // на неё секунду. Запас как у стрелка, а не прежние 40 — наименьшие в игре.
+  sniper:{ name:"Снайпер", shape:"triangle",hp:55, speed:66,range:400,dmg:200,rate:3.6,r:11,cost:900,up:15,pow:2.2,bribe:900,sight:500,aim:1,hitscan:true},
   // Гробовщик — томпсон: самый плотный огонь в игре и самая дорогая аренда.
   // hp<=200 НАМЕРЕННО: снайпер обязан снимать его с одного выстрела, пока тот сам
   // не открыл огонь. При rate 0.16 и COMBAT_TIME 2.2 в бою он в стойке ВСЕГДА,
-  // то есть снайпер его в перестрелке не берёт — берёт только на подходе.
+  // и там снайпер тратит на него ровно два выстрела (SNIPER_ENGAGED выведен из этих 120 HP).
+  // Дёшево он достаётся только на подходе: range 200 против 400 у снайпера — те самые
+  // 200 px, которых хватает и на секунду прицела, и на выстрел по ещё спокойной цели.
   undertaker:{name:"Гробовщик",shape:"diamond",hp:120,speed:78,range:200,dmg:9,rate:0.16,r:11,cost:1200,up:20,pow:2.5,bribe:2400,sight:290},
 };
 // Ростер: порядок кнопок в панели и цифровых хоткеев — как UP_KEYS у улучшений.
@@ -917,6 +930,7 @@ function spawnUnit(type,x,y,team,role){
   const u={id:uid++,type,team,x,y,tx:x,ty:y,hp:t.hp,maxhp:t.hp,cd:0,target:null,order:null,
     range:t.range,dmg:t.dmg,rate:t.rate,speed:t.speed,r:t.r,shape:t.shape,pow:t.pow,sight:t.sight,
     combat:0,                                  // >0 — боец в боевой стойке (сам ведёт бой)
+    aim:t.aim||0, aimT:0, aimTgt:null,         // прицеливание: сколько надо держать цель и сколько уже держит
     color:TEAM[team].main, dark:TEAM[team].dark, shot:TEAM[team].shot,
     role:role||"attacker",homeBiz:null};
   if(team!=="player"){
@@ -1603,6 +1617,9 @@ function setDest(u,x,y){
   u.path=findPath(u.x,u.y,x,y); u.pi=0; u.repath=0.5;
 }
 function stop(u){ u.path=null; u.tx=u.x; u.ty=u.y; }
+// Сбить прицел. Зовётся везде, где боец НЕ стоит на цели: ушёл сам, увели цель,
+// цель скрылась за домом. Прицеливание не копится «в кармане» — оно всегда с нуля.
+function aimOff(u){ u.aimT=0; u.aimTgt=null; }
 
 function moveUnit(u,dt){
   // цель текущего шага
@@ -1818,12 +1835,27 @@ function update(dt){
       // стрелять можно только по прямой видимости — сквозь дома нельзя
       if(d<=u.range && hasLOS(u.x,u.y,tgt.x,tgt.y)){
         stop(u);
-        if(u.cd<=0){ fire(u,tgt); u.cd=u.rate; }
+        // Боец ведёт бой ровно здесь: он стоит на цели — целится, стреляет или ждёт
+        // перезарядки. Стойка держится всё это время, а не только COMBAT_TIME после
+        // своего выстрела: у классов с rate больше COMBAT_TIME (снайпер) она иначе
+        // проседала бы между выстрелами, и они ловили бы снайперскую пулю в упор,
+        // хотя бой ведут. COMBAT_TIME остаётся хвостом — на выход из боя.
+        u.combat=COMBAT_TIME;
+        // Прицеливание. У классов с aim=0 выстрел уходит в тот же кадр, что и раньше;
+        // снайпер обязан продержать цель aim секунд. Прицел и ствол — НЕЗАВИСИМЫЕ таймеры:
+        // прицел копится и во время перезарядки, выстрел уходит, когда готовы оба.
+        // Поэтому секунду стоит только ПЕРВЫЙ выстрел по цели, а дальше цикл держится
+        // на rate — иначе класс молча терял бы четверть урона в секунду.
+        if(u.aimTgt!==tgt) { u.aimTgt=tgt; u.aimT=0; }     // сменил цель — целится заново
+        u.aimT+=dt;
+        if(u.cd<=0 && u.aimT>=u.aim){ fire(u,tgt); u.cd=u.rate; aimOff(u); }
       }else if(u.order==="attack"||u.order===null){
+        aimOff(u);
         if(u.repath<=0) setDest(u,tgt.x,tgt.y);   // цель движется/за домом — обновляем маршрут
         moveUnit(u,dt);
-      }else{ moveUnit(u,dt); }
+      }else{ aimOff(u); moveUnit(u,dt); }
     }else{
+      aimOff(u);
       moveUnit(u,dt);
     }
   }
@@ -1934,7 +1966,10 @@ function tickEconomy(dt){
 }
 
 const COMBAT_TIME=2.2;      // сколько боец держится в боевой стойке после своего выстрела
-const SNIPER_ENGAGED=0.15;  // во столько раз падает урон снайпера по бойцу в стойке
+// Во столько раз падает урон снайпера по бойцу в стойке. Число выведено из гробовщика
+// (120 HP — самый живучий класс): 200*0.3 = 60, то есть ровно ДВА выстрела. Меньше —
+// и снайпер в перестрелке бесполезен совсем, больше — и стойка перестаёт быть защитой.
+const SNIPER_ENGAGED=0.3;
 function fire(u,tgt){
   const d=Math.hypot(tgt.x-u.x,tgt.y-u.y)||1;
   u.combat=COMBAT_TIME;                  // сам открыл огонь — значит, в боевой стойке
@@ -1946,7 +1981,15 @@ function fire(u,tgt){
     tgt.hp-=dmg; hit(tgt.x,tgt.y,u.color); fx.push({x:(u.x+tgt.x)/2,y:(u.y+tgt.y)/2,t:0,max:.12,type:"swing",color:u.color});
   }else{
     const sp = u.type==="sniper"?900:520;
-    bullets.push({x:u.x,y:u.y,vx:(tgt.x-u.x)/d*sp,vy:(tgt.y-u.y)/d*sp,dmg,life:d/sp+0.02,target:tgt,color:u.shot});
+    const shot={x:u.x,y:u.y,vx:(tgt.x-u.x)/d*sp,vy:(tgt.y-u.y)/d*sp,dmg,life:d/sp+0.02,target:tgt,color:u.shot};
+    if(TYPES[u.type].hitscan){
+      // Попадание считается В МОМЕНТ ВЫСТРЕЛА. Обычная пуля летит по прямой в то место,
+      // где цель была, и мажет по идущему вбок (через мост, например) — снайперу это
+      // запрещено: он и так платит за выстрел секундой прицела и самой долгой перезарядкой.
+      // На экране остаётся трассер (target:null) — урон по нему уже не считается второй раз.
+      tgt.hp-=dmg; hit(tgt.x,tgt.y,u.shot); shot.target=null; shot.life=d/sp;
+    }
+    bullets.push(shot);
     fx.push({x:u.x,y:u.y,t:0,max:.08,type:"muzzle",color:u.shot, ang:Math.atan2(tgt.y-u.y,tgt.x-u.x)});
   }
 }
@@ -2530,6 +2573,18 @@ function draw(){
 
   // юниты — свои видны всегда, чужие только в обзоре
   units.forEach(u=>{ if(u.team==="player"||canSee("player",u.x,u.y)) drawUnit(u); });
+
+  // прицел: пока боец целится, до цели тянется нить, и она наливается к выстрелу.
+  // Видно её на тех же правах, что и самого бойца: заметил снайпера — заметил и то,
+  // что он уже держит кого-то на мушке, и есть секунда что-то с этим сделать.
+  units.forEach(u=>{
+    if(!u.aimTgt || u.aim<=0 || u.aimTgt.hp<=0) return;
+    if(u.team!=="player" && !canSee("player",u.x,u.y)) return;
+    const k=Math.min(1,u.aimT/u.aim);
+    ctx.strokeStyle=u.shot; ctx.globalAlpha=.12+.5*k; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(u.x,u.y); ctx.lineTo(u.aimTgt.x,u.aimTgt.y); ctx.stroke();
+    ctx.globalAlpha=1;
+  });
 
   // пули
   bullets.forEach(p=>{ if(!canSee("player",p.x,p.y)) return;

@@ -33,6 +33,7 @@ const BRIDGE = `
   distFrom, stepsTo, enemyAI,
   update, draw, setDest, spawnUnit, passable, findPath,
   hasLOS, reset: initWorld, playerHQ, factionHQ,
+  COMBAT_TIME, SNIPER_ENGAGED, aimOff, GAME_SPEED,
   selectBuy, captureSpots, inCapZone, captureBusinesses, fire, commandTo, pickBiz,
   vis, canSee, knownOwner, knownKind, bizView, updateVision, visFrom, SIGHT_BIZ, SIGHT_HQ,
   funds, fInc, fUp, tickEconomy,

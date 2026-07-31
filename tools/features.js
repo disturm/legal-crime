@@ -121,12 +121,19 @@ function ok(name, cond, extra) {
   ok("свой выстрел из томпсона ставит гробовщика в стойку", mark.combat > 0);
 
   // Контригра ровно одна: снайпер берёт гробовщика только на подходе.
+  // Урон снайпера считается на самом выстреле, поэтому меряем от maxhp, а не от hp.
+  mark.hp = mark.maxhp;
   g.bullets.length = 0;
   g.fire(sniper, mark);
   ok("ввязавшегося в бой гробовщика снайпер уже не снимает",
-    g.bullets[0] && g.bullets[0].dmg < mark.hp,
-    g.bullets[0] && `урон ${g.bullets[0].dmg} при ${mark.hp} HP`);
+    g.bullets[0] && g.bullets[0].dmg < mark.maxhp,
+    g.bullets[0] && `урон ${g.bullets[0].dmg} при ${mark.maxhp} HP`);
+  // ...но и в стойке он не бессмертен: SNIPER_ENGAGED выведен ровно из этих 120 HP.
+  g.fire(sniper, mark);
+  ok("со второго выстрела снайпер снимает гробовщика и в стойке",
+    mark.hp <= 0, `${mark.hp} HP после двух выстрелов`);
 
+  mark.hp = mark.maxhp;
   mark.combat = 0;
   g.bullets.length = 0;
   g.fire(sniper, mark);
@@ -172,13 +179,105 @@ function ok(name, cond, extra) {
   g.fire(sniper, victim);
   const engaged = g.bullets[0];
   ok("по бойцу в стойке урон снайпера резко падает",
-    engaged && engaged.dmg > 0 && engaged.dmg < calm.dmg * 0.25,
+    engaged && engaged.dmg > 0 && engaged.dmg < calm.dmg * 0.4,
     engaged && `урон ${engaged.dmg} против ${calm.dmg}`);
+  // Скидка выведена из самого живучего класса: даже гробовщика в стойке снайпер
+  // обязан снимать ровно за два выстрела — не за один и не за четыре.
+  ok("двух выстрелов хватает на любого бойца в стойке",
+    engaged.dmg * 2 >= g.TYPES.undertaker.hp && engaged.dmg < g.TYPES.undertaker.hp,
+    `${engaged.dmg} x2 против ${g.TYPES.undertaker.hp} HP гробовщика`);
 
   ok("снайпер стреляет редко", g.TYPES.sniper.rate >= 3 &&
     g.TYPES.sniper.rate > g.TYPES.shooter.rate * 5, `rate=${g.TYPES.sniper.rate}`);
 
   ok("свой выстрел ставит бойца в боевую стойку", sniper.combat > 0);
+}
+
+// ---------- снайпер попадает В МОМЕНТ ВЫСТРЕЛА, а не когда долетит ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  const hq = g.playerHQ(), sp = g.captureSpots(hq)[0];
+  g.units.length = 0;                            // чужие бойцы в этой сцене только мешают
+  g.spawnUnit("sniper", sp.x, sp.y, "player");
+  g.spawnUnit("bouncer", sp.x + 8, sp.y, "ai1");
+  const sniper = g.units[0], victim = g.units[1];
+
+  victim.combat = 0;
+  g.bullets.length = 0;
+  g.fire(sniper, victim);
+  ok("урон снайпера ложится сразу на выстреле", victim.hp <= 0,
+    `${victim.hp} HP сразу после fire`);
+  // Пуля остаётся только как трассер: без target она не может ударить второй раз,
+  // и ушедшую вбок цель (через мост, например) она уже не «промахивает».
+  ok("снайперская пуля — трассер, цель второй раз не бьёт",
+    g.bullets.length === 1 && g.bullets[0].target === null && g.bullets[0].dmg > 0);
+
+  // У остальных классов пуля по-прежнему летит и ведёт цель — своей ветки они не получили
+  g.spawnUnit("shooter", sp.x, sp.y, "player");
+  const shooter = g.units[g.units.length - 1];
+  victim.hp = victim.maxhp;
+  g.bullets.length = 0;
+  g.fire(shooter, victim);
+  ok("у остальных пуля летит и урон считается на попадании",
+    g.bullets[0] && g.bullets[0].target === victim && victim.hp === victim.maxhp,
+    `${victim.hp} HP`);
+}
+
+// ---------- прицеливание: секунда до выстрела, и сбивается вместе с целью ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  const hq = g.playerHQ(), sp = g.captureSpots(hq)[0];
+  const need = g.TYPES.sniper.aim;
+
+  ok("снайперу задано время прицеливания", need >= 1, `aim=${need}`);
+  ok("остальным классам целиться не надо",
+    Object.keys(g.TYPES).every(t => t === "sniper" || !g.TYPES[t].aim));
+
+  g.units.length = 0;
+  g.spawnUnit("sniper", sp.x, sp.y, "player");
+  g.spawnUnit("bouncer", sp.x + 6, sp.y, "ai1");
+  const sniper = g.units[0], victim = g.units[1];
+
+  // aim задан в ИГРОВЫХ секундах, как rate и COMBAT_TIME, а update принимает реальные
+  let t = 0;
+  const step = 0.05 * g.GAME_SPEED;
+  while (t < need - 0.15) { g.update(0.05); t += step; }
+  ok("пока целится — не стреляет",
+    victim.hp === victim.maxhp && sniper.aimT > 0,
+    `${victim.hp} HP, прицел ${sniper.aimT.toFixed(2)}с из ${need}с`);
+  ok("целящийся боец уже в боевой стойке", sniper.combat > 0,
+    `стойка ${sniper.combat.toFixed(2)}с, а выстрела ещё не было`);
+
+  while (t < need + 0.2) { g.update(0.05); t += step; }
+  // Насмерть тут не проверяем: вышибала успевает огрызнуться и встаёт в стойку,
+  // а по бойцу в стойке снайпер бьёт вполсилы — это соседняя механика, не эта.
+  ok("додержав цель — стреляет", victim.hp < victim.maxhp, `${victim.hp} HP на ${t.toFixed(2)}с`);
+
+  // Прицел копится и во время перезарядки: секунда стоит только ПЕРВЫЙ выстрел по цели,
+  // дальше цикл держится на rate. Иначе класс тихо терял бы четверть урона в секунду.
+  sniper.hp = sniper.maxhp = 9000;               // сцена про темп огня, а не про размен
+  victim.hp = victim.maxhp = 9000;
+  const gap = [];
+  let last = victim.hp, t2 = 0, lowest = 9;
+  while (gap.length < 2 && t2 < 14) {
+    g.update(0.05); t2 += step;
+    lowest = Math.min(lowest, sniper.combat);
+    if (victim.hp < last) { gap.push(t2); last = victim.hp; }
+  }
+  ok("второй выстрел идёт по перезарядке, без новой секунды прицела",
+    gap.length === 2 && gap[1] - gap[0] < g.TYPES.sniper.rate + need * 0.5,
+    gap.length === 2 && `между выстрелами ${(gap[1] - gap[0]).toFixed(2)}с при rate ${g.TYPES.sniper.rate}`);
+  // rate 3.6 больше COMBAT_TIME 2.2: пока стойку взводил только свой выстрел,
+  // снайпер между выстрелами выпадал из неё и ловил чужую пулю в упор, ведя бой.
+  ok("стойка не проседает между выстрелами", lowest > 0,
+    `минимум стойки за цикл ${lowest.toFixed(2)}с при rate ${g.TYPES.sniper.rate} и COMBAT_TIME ${g.COMBAT_TIME}`);
+
+  // Цель ушла — прицел не копится «в кармане»: следующая начинается с нуля.
+  sniper.aimT = 0.9; sniper.aimTgt = victim;
+  g.aimOff(sniper);
+  ok("прицел сбивается, когда цель потеряна", sniper.aimT === 0 && sniper.aimTgt === null);
 }
 
 // ---------- зона захвата: узкий крест вплотную, без диагоналей ----------
