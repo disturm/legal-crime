@@ -564,7 +564,7 @@ function ok(name, cond, extra) {
   // Дефолт тестов и дефолт игры — РАЗНЫЕ, и их легко случайно свести: тесты гоняют десятки
   // миров подряд (большая карта делает прогон дорогим), а игра открывается на большой.
   ok("тесты по умолчанию идут на маленькой карте", g.mapSize === "small", g.mapSize);
-  ok("в игре по умолчанию большая карта", g.DEFAULT_SIZE === "large" && g.wantSize === "large",
+  ok("в игре по умолчанию средняя карта", g.DEFAULT_SIZE === "normal" && g.wantSize === "normal",
     `${g.DEFAULT_SIZE} / ${g.wantSize}`);
   ok("у каждого размера своя кнопка на старте", keys.every(k => g.els[g.szId(k)]),
     "нет кнопки: " + keys.filter(k => !g.els[g.szId(k)]).join(", "));

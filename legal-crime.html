@@ -245,7 +245,9 @@ const MAP_SIZES={
   normal:{name:"Нормальный",cols:33, rows:25, biz:26},
   large: {name:"Большой",   cols:40, rows:30, biz:34},
 };
-const SIZE_KEYS=Object.keys(MAP_SIZES), DEFAULT_SIZE="large";
+// Дефолт партии — средний город: большой интереснее, но и длиннее, а маленький жёсток
+// на четырёх фракциях. Замеры лесенки сложности сняты на `large` — см. CLAUDE.md.
+const SIZE_KEYS=Object.keys(MAP_SIZES), DEFAULT_SIZE="normal";
 // COLS/ROWS/WORLD_*/BIZ_CAP теперь переменные: их переставляет setMapSize, и только
 // из initWorld — менять размер под живым миром нельзя, рендер читает grid по COLS/ROWS.
 let mapSize=DEFAULT_SIZE, COLS, ROWS, WORLD_W, WORLD_H, BIZ_CAP;
