@@ -961,7 +961,7 @@ function initWorld(aiCount,seed,size,fog){
   units.length=0; bullets.length=0; fx.length=0;
   uid=1;
   ended=false; outcome=null; paused=false;
-  selected.clear(); selecting=false; selectStart=null; selBiz=null;
+  selected.clear(); cancelSelect(); selBiz=null;
   enemyTimer=6; waveTimer=18; wave=0;
   resetFog();                        // туман — под новую карту и новый список сторон
   // стартовый отряд одинаков у всех: ровно 1 вышибала + 1 стрелок у своего штаба.
@@ -1027,8 +1027,9 @@ addEventListener("keydown",e=>{keys[e.code]=1;
   audioResume();                        // клавиша — такой же жест игрока, как клик
   if(e.code==="Space"){paused=!paused;e.preventDefault();}
   if(e.code==="KeyM") toggleMute();     // общий мьют; галки в панели — по отдельности
-  // Esc закрывает панельку заведения: она стоит поверх карты и своё место занимает
-  if(e.code==="Escape" && selBiz) setSelBiz(null);
+  // Esc закрывает панельку заведения: она стоит поверх карты и своё место занимает,
+  // и он же — общий отказ от начатого: недотянутая рамка снимается, ничего не выбрав
+  if(e.code==="Escape"){ cancelSelect(); if(selBiz) setSelBiz(null); }
   // найм с клавиатуры — боец сразу появляется в штабе; цифра = место класса в BUY_KEYS
   if(/^Digit[1-9]$/.test(e.code)){ const t=BUY_KEYS[+e.code.slice(5)-1]; if(t) selectBuy(t); }
   if(e.code==="KeyH"){   // мгновенно к своему штабу — стандартный хоткей жанра
@@ -1051,6 +1052,10 @@ canvas.addEventListener("wheel",e=>{
 // без зависимости от offsetX
 function evScreen(e){ const r=canvas.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; }
 function evWorld(e){ const s=evScreen(e); return s2w(s.x,s.y); }
+// Зажатая в границы канваса версия — ЕДИНСТВЕННЫЙ способ получить мировую точку
+// для курсора, ушедшего с карты: и `mouse` (по нему рисуется рамка), и конец
+// рамки считаются ею, иначе за краем карты нарисовано одно, а выделено другое.
+function s2wClamped(sx,sy){ return s2w(Math.max(0,Math.min(W,sx)), Math.max(0,Math.min(H,sy))); }
 
 canvas.addEventListener("mousedown",e=>{
   audioResume();                        // первый клик по карте — жест, по которому заводится звук
@@ -1076,18 +1081,44 @@ canvas.addEventListener("mousedown",e=>{
       // Рамку всё равно заводим: протянуть выделение можно и поверх заведения.
       const bz=pickBiz(w);
       setSelBiz((bz && bz.owner==="player") ? bz : null);
-      selecting=true; selectStart=w;
+      beginSelect(w);
     }
   }else if(e.button===2){ // ПКМ — приказ
     commandTo(w);
   }
 });
+// Рамка выделения: начало, конец и отмена — три отдельные функции, и весь её жизненный
+// цикл проходит через них. Раньше конец рамки жил в обработчике mouseup НА КАНВАСЕ,
+// и рамка повисала на экране до следующего клика, если кнопку отпускали не над картой:
+// над правым меню, над панелькой заведения или вовсе за окном браузера. Теперь
+// отпускание ловится на окне (см. ниже), а «кнопку отпустили вне окна» — по e.buttons.
+function beginSelect(w){ selecting=true; selectStart=w; }
+function cancelSelect(){ selecting=false; selectStart=null; }
+// Без аргумента конец берётся из `mouse` — последней позиции, по которой рамка была
+// нарисована. Выделяется ровно то, что игрок видел на экране.
+function endSelect(w){
+  if(!selecting){ selectStart=null; return; }
+  const a=selectStart, b=w||mouse;
+  selecting=false; selectStart=null;
+  if(!a) return;
+  const x1=Math.min(a.x,b.x),x2=Math.max(a.x,b.x),y1=Math.min(a.y,b.y),y2=Math.max(a.y,b.y);
+  if(Math.hypot(x2-x1,y2-y1)<=10) return;      // не рамка, а клик по пустому месту
+  if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
+  units.forEach(u=>{ if(u.team==="player"&&u.x>=x1&&u.x<=x2&&u.y>=y1&&u.y<=y2) selected.add(u.id); });
+  setSelBiz(null);                   // потянули рамку — значит выбирали бойцов, а не точку
+}
 // курсор слушаем на всём окне: иначе при уходе на панель координата «залипает»
 // и карта продолжает ползти сама по себе
 addEventListener("mousemove",e=>{
+  // Кнопку могли отпустить за пределами окна — тогда mouseup не придёт вообще никуда,
+  // и единственный честный признак «уже отпустили» — e.buttons на первом же движении.
+  // Проверяем ДО пересчёта `mouse`: рамка закрывается по последней позиции под кнопкой,
+  // а не по той, куда курсор успел вернуться.
+  if(!(e.buttons&1) && (selecting||mmDrag)){ mmDrag=false; endSelect(); }
+  if(!(e.buttons&4) && drag) drag=null;
   const r=canvas.getBoundingClientRect();
   mouseScreen={x:e.clientX-r.left, y:e.clientY-r.top};
-  mouse=s2w(Math.max(0,Math.min(W,mouseScreen.x)), Math.max(0,Math.min(H,mouseScreen.y)));
+  mouse=s2wClamped(mouseScreen.x, mouseScreen.y);
   // над панелью прокрутки нет: уход вправо к кнопкам — это намерение нанять,
   // а не прокрутить карту
   overCanvas = mouseScreen.x>=0 && mouseScreen.x<=W && mouseScreen.y>=0 && mouseScreen.y<=H;
@@ -1098,19 +1129,16 @@ addEventListener("mousemove",e=>{
 addEventListener("mouseout",e=>{ if(!e.relatedTarget) mouseScreen=null; });  // курсор вне окна — стоп
 // перетаскивание карты средней кнопкой — точная альтернатива краям
 addEventListener("mousedown",e=>{ if(e.button===1){ drag={x:e.clientX,y:e.clientY}; e.preventDefault(); } });
-addEventListener("mouseup",  e=>{ if(e.button===1) drag=null; if(e.button===0) mmDrag=false; });
-canvas.addEventListener("mouseup",e=>{
-  if(e.button===0 && selecting){
-    const a=selectStart, b=evWorld(e);
-    const x1=Math.min(a.x,b.x),x2=Math.max(a.x,b.x),y1=Math.min(a.y,b.y),y2=Math.max(a.y,b.y);
-    if(Math.hypot(x2-x1,y2-y1)>10){
-      if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
-      units.forEach(u=>{ if(u.team==="player"&&u.x>=x1&&u.x<=x2&&u.y>=y1&&u.y<=y2) selected.add(u.id); });
-      setSelBiz(null);                   // потянули рамку — значит выбирали бойцов, а не точку
-    }
-  }
-  selecting=false; selectStart=null;
+// Отпускание слушаем НА ОКНЕ, а не на канвасе: конец перетаскивания принадлежит
+// не той области, над которой курсор оказался, а тому, что тянули с самого начала.
+// Точка отпускания зажимается в границы канваса — так же, как `mouse`.
+addEventListener("mouseup",e=>{
+  if(e.button===1) drag=null;
+  if(e.button===0){ mmDrag=false; const s=evScreen(e); endSelect(s2wClamped(s.x,s.y)); }
 });
+// Уход из окна (Alt+Tab, переключение вкладки) — это прерванное перетаскивание,
+// а не выделение: рамку снимаем, ничего не выбирая. Иначе она переживёт возврат.
+addEventListener("blur",()=>{ cancelSelect(); drag=null; mmDrag=false; });
 // mouseScreen=null, пока курсор не двигали: иначе стартовые {0,0} сразу тянут карту влево
 let mouse={x:0,y:0}, mouseScreen=null, overCanvas=false, drag=null, mmDrag=false;
 let edgeScrollOn=false;   // прокрутка краями — опция, по умолчанию выключена
