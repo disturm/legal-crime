@@ -72,7 +72,12 @@
      имя написано цветом стороны и подпёрто её же полосой слева. Отдельной легенды
      с кружками рядом нет — она повторяла ровно то же сопоставление второй раз,
      и обе половины из-за этого приходилось мельчить. */
-  #standings{border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--panel2)}
+  /* flex:0 0 auto — не украшение: #side это flex-колонка с прокруткой, а overflow:hidden
+     (он нужен, чтобы строки не вылезали из скругления) снимает у flex-элемента
+     автоматический минимальный размер. Без запрета сжатия табло схлопывалось в нулевую
+     высоту, едва содержимое панели переставало влезать в экран: заголовок был, таблицы нет. */
+  #standings{flex:0 0 auto;border:1px solid var(--line);border-radius:9px;
+    overflow:hidden;background:var(--panel2)}
   #standings .row{display:flex;align-items:stretch;border-top:1px solid var(--line)}
   #standings .row:first-child{border-top:0}
   #standings .bar{flex:0 0 5px}                 /* полоса цвета стороны во всю высоту строки */
