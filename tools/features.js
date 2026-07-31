@@ -640,6 +640,82 @@ function ok(name, cond, extra) {
   ok("неизвестный размер игнорируется", g.wantSize === "large");
 }
 
+// ---------- стартовый экран: переключатели + одна кнопка «Начать» ----------
+{
+  const g = loadGame();
+  ok("у каждого числа противников своя кнопка", [1, 2, 3].every(n => g.els["ovN" + n]));
+  ok("кнопка «Начать» есть", !!g.els.ovGo);
+  ok("галка «Без тумана» есть", !!g.els.ovNoFog);
+
+  // Число противников — теперь переключатель, а не старт: клик по нему партию не начинает.
+  const before = g.factions.length;
+  g.pickAI(3);
+  ok("кнопка противников партию не начинает", g.wantAI === 3 && g.factions.length === before,
+    `wantAI=${g.wantAI}, фракций ${g.factions.length} было ${before}`);
+  ok("выбранное число противников подсвечено",
+    g.els.ovN3.className.includes("on") && !g.els.ovN2.className.includes("on"),
+    `${g.els.ovN3.className} | ${g.els.ovN2.className}`);
+  g.pickAI(9);
+  ok("число противников зажато в 1..3", g.wantAI === 3, `wantAI=${g.wantAI}`);
+
+  // «Начать» собирает мир из всех трёх переключателей разом.
+  g.pickSize("normal"); g.pickAI(2); g.setNoFog(false);
+  g.startGame();
+  ok("«Начать» строит мир по выбранным настройкам",
+    g.factions.length === 3 && g.mapSize === "normal" && g.fogOn === true,
+    `фракций ${g.factions.length}, ${g.mapSize}, туман ${g.fogOn}`);
+  ok("стартовый экран убран", g.els.over.style.display === "none");
+
+  // На конце партии выбирать нечего: показана только «Заново».
+  g.showOver(false);
+  ok("на конце партии показана только «Заново»",
+    g.els.ovAgain.style.display === "inline-block" && g.els.ovGo.style.display === "none" &&
+    g.els.ovStart.style.display === "none",
+    `назад=${g.els.ovAgain.style.display} начать=${g.els.ovGo.style.display}`);
+
+  // Выбор держится между партиями: «Заново» не должно втихую вернуть настройки к дефолту.
+  g.showStart();
+  ok("«Заново» показывает прежний выбор",
+    g.wantSize === "normal" && g.wantAI === 2 && g.els.ovN2.className.includes("on") &&
+    g.els[g.szId("normal")].className.includes("on"), `${g.wantSize} / ${g.wantAI}`);
+  ok("стартовый экран снова предлагает «Начать»",
+    g.els.ovGo.style.display === "inline-block" && g.els.ovAgain.style.display === "none");
+}
+
+// ---------- «Без тумана войны»: снимается сразу у всех сторон ----------
+{
+  const g = loadGame();
+  ok("по умолчанию туман включён", g.wantFog === true && !g.els.ovNoFog.checked);
+
+  g.reset(2, 8001);
+  const enemy = g.units.find(u => u.team !== "player");
+  ok("с туманом чужой боец на старте не виден", !g.canSee("player", enemy.x, enemy.y));
+
+  g.setNoFog(true);
+  ok("галка «Без тумана» гасит туман только в выборе, не в живом мире",
+    g.wantFog === false && g.fogOn === true, `wantFog=${g.wantFog} fogOn=${g.fogOn}`);
+
+  g.reset(2, 8001, undefined, false);
+  ok("новая партия идёт без тумана", g.fogOn === false);
+  const e2 = g.units.find(u => u.team !== "player");
+  ok("без тумана чужой боец виден сразу", g.canSee("player", e2.x, e2.y));
+  // Симметрия — не украшение: фогнуть одну сторону значит мерить не сложность, а читерство.
+  ok("без тумана видят ВСЕ стороны, а не только игрок",
+    g.factions.every(f => g.units.every(u => g.canSee(f, u.x, u.y))));
+  // vis читают и рендер, и тесты: «видно всё» обязано выглядеть одинаково во всех местах
+  g.updateVision(1);
+  ok("без тумана vis заполнен целиком",
+    g.factions.every(f => g.vis[f].every(v => v === 1)));
+  const foreign = g.businesses.find(b => b.owner !== "player" && b.owner !== "neutral");
+  ok("без тумана владелец чужой точки известен",
+    g.knownOwner("player", foreign) === foreign.owner,
+    `${g.knownOwner("player", foreign)} вместо ${foreign.owner}`);
+  // Обратно: следующая партия с туманом снова прячет чужих.
+  g.reset(2, 8001, undefined, true);
+  const e3 = g.units.find(u => u.team !== "player");
+  ok("туман возвращается следующей партией", g.fogOn === true && !g.canSee("player", e3.x, e3.y));
+}
+
 // ---------- звук: выстрелы фогнуты, тумблеры едины, джаз идёт ----------
 {
   // с заглушкой WebAudio: без неё весь звуковой модуль — no-op (это проверяется ниже отдельно)
@@ -721,6 +797,19 @@ function ok(name, cond, extra) {
   g.toggleMute();
   ok("повторный M возвращает прежние галки", g.musicOn === true && g.sfxOn === false,
     `музыка ${g.musicOn}, звуки ${g.sfxOn}`);
+
+  // Без тумана слух тоже открыт: у sfx одна проверка обзора, и она обязана слушаться флага.
+  // Затухание за краем экрана при этом остаётся — туман и расстояние это разные фильтры.
+  // Блок последний в секции: он пересоздаёт мир, и бойцы предыдущих проверок протухают.
+  g.setAudio("sfx", true, true); g.setAudio("music", false, true);
+  g.reset(1, 8002, undefined, false);
+  const nf = g.units.find(x => x.team !== "player");
+  g.cam.x = nf.x - 1200 / 2; g.cam.y = nf.y - 800 / 2;
+  wait(1);
+  ok("без тумана выстрел неразведанного бойца слышно", shot("shooter", nf.x, nf.y).okShot);
+  wait(1);
+  ok("без тумана далёкий выстрел всё равно не слышно",
+    !shot("shooter", nf.x + g.WORLD_W, nf.y).okShot);
 }
 
 // ---------- без AudioContext игра работает как раньше ----------

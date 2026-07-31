@@ -1,5 +1,5 @@
 // Прогон партий ботом — проверка баланса и того, что игра вообще проходима.
-//   node tools/sim.js <mode> [N] [ИИ] [сид|rnd] [размер карты: small|normal|large]
+//   node tools/sim.js <mode> [N] [ИИ] [сид|rnd] [размер: small|normal|large] [nofog]
 //   mode: mass — разводит бойцов по разным целям и держит охрану штаба
 //                (основной сценарий «нормальной игры»: точку тянет один сильнейший,
 //                 поэтому копить толпу под одну цель больше не имеет смысла)
@@ -65,8 +65,8 @@ function walkDist(g, d, b, fx, fy) {
   return best === Infinity ? 1e6 + Math.hypot(b.x - fx, b.y - fy) : best;
 }
 
-function play(g, mode, aiCount, seed, size) {
-  g.reset(aiCount, seed, size);              // новый мир с нужным числом ИИ и размером карты
+function play(g, mode, aiCount, seed, size, fog) {
+  g.reset(aiCount, seed, size, fog);         // новый мир: число ИИ, размер карты и туман
   let t = 0, peakEnemy = 0;
   // Как и ИИ, бот специализируется на одном типе рынка: доля растёт только у того,
   // кто держит фокус, а голая жадность по «доход на доллар» сводит все партии к стриптизу.
@@ -194,11 +194,14 @@ const base = seedArg === "rnd" ? null : (+seedArg >>> 0) || 12345;
 // Размер карты — такой же рычаг сложности, как число ИИ: меньше карта — меньше точек,
 // а армия игрока упирается только в деньги. Сравнивать столбцы можно лишь при одном размере.
 const size = process.argv[6];
+// `nofog` снимает туман сразу у ВСЕХ сторон — иначе замер мерил бы не сложность, а читерство.
+// Бот от этого играет заметно иначе: цели он берёт по knownOwner, а без тумана видит их все.
+const fog = process.argv[7] === "nofog" ? false : undefined;
 const rows = [];
 for (let n = 0; n < N; n++)
-  rows.push(play(loadGame(), mode, aiCount, base === null ? undefined : base + n * 7919, size));
+  rows.push(play(loadGame(), mode, aiCount, base === null ? undefined : base + n * 7919, size, fog));
 console.log(`${mode.toUpperCase()} — ${N} партий, ИИ: ${aiCount}, ` +
-  `карта: ${size || "large (по умолчанию)"}, ` +
+  `карта: ${size || "large (по умолчанию)"}, туман: ${fog === false ? "снят" : "есть"}, ` +
   `карты: ${base === null ? "случайные" : "сид " + base}`);
 rows.forEach((r, i) => console.log(` #${i}`, JSON.stringify(r)));
 const wins = rows.filter(r => r.win).map(r => r.sec);
