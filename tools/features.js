@@ -1149,6 +1149,59 @@ function ok(name, cond, extra) {
   ok("отбитый трофейный штаб возвращает сбор домой", g.rallyPoint("player") === hq);
 }
 
+// ---------- выбывание фракции: уходит с карты целиком ----------
+// Пока выбывание было флагом, разбитая ИИ-фракция продолжала играть: копила кассу,
+// нанимала подкрепления и держала район. Игрок дожимал последнего живого соперника
+// и получал «ГОРОД ТВОЙ» при чужом штабе и чужой армии на экране.
+{
+  const g = loadGame();
+  g.reset(2, 4242);                              // три стороны: player, ai1, ai2
+  const free = g.businesses.filter(b => b.owner === "neutral" && !b.hq).slice(0, 2);
+  free.forEach(b => b.owner = "ai2");
+  free[0].kind = "bar";                          // выбывшая успела вложиться в район
+  const hq2 = g.factionHQ("ai2");
+  g.spawnUnit("shooter", hq2.x, hq2.y, "ai2", "attacker");
+  g.spawnUnit("bouncer", hq2.x, hq2.y, "ai2", "attacker");
+
+  hq2.owner = "ai1";                             // штаб ai2 взял ai1 — игрок ни при чём
+  g.checkEnd();
+  ok("выбывшая фракция распущена", !g.alive("ai2") && g.dead.has("ai2"));
+  ok("бойцы выбывшей ушли с карты", g.units.every(u => u.team !== "ai2"),
+    g.units.filter(u => u.team === "ai2").length + " осталось");
+  ok("точки выбывшей стали ничьими", free.every(b => b.owner === "neutral"),
+    free.map(b => b.owner).join(", "));
+  ok("улучшение на точке выбывшей сохранилось", free[0].kind === "bar");
+  ok("трофейный штаб остался у захватчика", hq2.owner === "ai1");
+  ok("партия не кончилась: живой соперник ещё есть", !g.ended && g.outcome === null);
+  g.funds.ai2 = 100000;
+  g.enemyAI(30);
+  ok("за выбывшую ИИ не играет и подкреплений не нанимает",
+    g.units.every(u => u.team !== "ai2"), g.units.filter(u => u.team === "ai2").length + " шт");
+
+  g.factionHQ("ai1").owner = "player";            // игрок дожимает последнего живого
+  g.checkEnd();
+  ok("победа — последней живой фракцией", g.outcome === "win" && g.ended);
+  const foreign = g.businesses.filter(b => b.owner !== "player" && b.owner !== "neutral");
+  ok("в момент победы чужих точек на карте нет", foreign.length === 0,
+    foreign.map(b => b.name + ":" + b.owner).join(", "));
+  ok("трофейный штаб выбывшего захватчика стал ничьим", hq2.owner === "neutral");
+  ok("в момент победы чужих бойцов на карте нет", g.units.every(u => u.team === "player"),
+    g.units.filter(u => u.team !== "player").length + " шт");
+}
+
+// Поражение игрока роспуском не сопровождается: партия кончилась, распускать нечего —
+// иначе последний кадр показывал бы пустую карту вместо своей армии у павшего штаба.
+{
+  const g = loadGame();
+  g.reset(1);
+  const mine = g.units.filter(u => u.team === "player").length;
+  g.playerHQ().owner = "ai1";
+  g.checkEnd();
+  ok("поражение — потерян свой штаб", g.outcome === "lose" && g.ended);
+  ok("армия игрока в кадре поражения на месте",
+    g.units.filter(u => u.team === "player").length === mine && !g.dead.has("player"));
+}
+
 // ИИ и бот в сим тренировочный центр не строят: подкрепления ИИ и так выходят
 // у случайной СВОЕЙ точки, то есть сбор у него распределён даром. Пустить его
 // в жадность по «доходу на доллар» — значит дать ИИ денежную дыру, которой у игрока нет.

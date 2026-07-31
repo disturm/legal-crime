@@ -1009,7 +1009,7 @@ function initWorld(aiCount,seed,size,fog){
   resetRally();                      // сбор у всех снова в штабе: залов на новой карте нет
   units.length=0; bullets.length=0; fx.length=0;
   uid=1;
-  ended=false; outcome=null; paused=false;
+  ended=false; outcome=null; paused=false; dead.clear();
   selected.clear(); cancelSelect(); selBiz=null;
   enemyTimer=6; waveTimer=18; wave=0;
   resetFog();                        // туман — под новую карту и новый список сторон
@@ -1064,6 +1064,7 @@ function resetFunds(){
 }
 let paused=false, selectStart=null, selecting=false;
 let ended=false, outcome=null;             // outcome: "win" | "lose" | null
+const dead=new Set();                      // фракции, которые уже распущены (см. eliminate)
 const selected=new Set();
 let selBiz=null;                           // выбранное своё заведение — цель кнопок улучшения
 // Выбор меняем ТОЛЬКО через это: контекстная панель висит у точки, и её надо не просто
@@ -1561,7 +1562,7 @@ function enemyAI(dt){
   const retarget = enemyTimer<=0;
   if(retarget) enemyTimer=2.5;
   aiTeams().forEach(me=>{
-    if(!retarget) return;
+    if(!retarget || !alive(me)) return;   // за выбывшую фракцию не играют: она распущена
     aiUpgrade(me);          // вторая статья расходов фракции: первая — подкрепления в волне
     // Стартовых гарнизонов больше нет ни у кого, поэтому ИИ сам снимает бойца в охрану штаба:
     // иначе базу уводит один залётный гангстер, и партии решаются случайностью.
@@ -1627,6 +1628,7 @@ function enemyAI(dt){
   if(waveTimer<=0){
     wave++; waveTimer=HIRE_TICK;
     aiTeams().forEach(me=>{
+      if(!alive(me)) return;                       // выбывшая не нанимает: штаб пал
       const edge=businesses.filter(b=>b.owner===me);
       if(!edge.length) return;                     // земли нет — некому платить бойцам
       // ИИ «даёт взятки» по мере роста территории — те же ворота, что и у игрока
@@ -2149,11 +2151,32 @@ function fire(u,tgt){
 function hit(x,y,c){ fx.push({x,y,t:0,max:.25,type:"hit",color:c}); }
 function ping(x,y,c){ fx.push({x,y,t:0,max:.5,type:"ping",color:c}); }
 
+// ВЫБЫВАНИЕ — ИСПОЛНЕНИЕ, А НЕ ФЛАГ. Фракция, потерявшая родной штаб, уходит с карты
+// целиком: бойцы расходятся, все её точки (включая трофейные штабы и улучшения) становятся
+// ничьими, ИИ за неё больше не играет. Пока это был один только флаг, разбитая сторона
+// продолжала копить кассу, нанимать подкрепления и захватывать точки — и партия
+// заканчивалась победой «последнего живого» при чужом штабе и чужой армии на экране.
+// Улучшение с точки НЕ снимаем: оно неотделимо от заведения ровно так же, как при захвате.
+function eliminate(f){
+  if(dead.has(f)) return;
+  dead.add(f);
+  for(const b of businesses){
+    if(b.owner===f){ b.owner="neutral"; b.capture=0; b.capBy=null; }
+    else if(b.capBy===f){ b.capture=0; b.capBy=null; }   // тянуть точку больше некому
+  }
+  for(let i=units.length-1;i>=0;i--) if(units[i].team===f){ selected.delete(units[i].id); units.splice(i,1); }
+  delete rally[f];                    // сбор и касса выбывшей больше ничего не значат
+  if(funds[f]!==undefined) funds[f]=0;
+  toast(teamLabel(f)+" — выбыли");
+}
 function checkEnd(){
   if(ended) return;
-  // поражение — потерян свой штаб
+  // поражение — потерян свой штаб. Проверяется ДО роспуска: свою армию в кадре поражения
+  // распускать нечего, партия и так кончилась.
   if(!alive("player")){ outcome="lose"; endGame(); return; }
-  // победа — остался последней живой фракцией
+  // выбывших — с карты, и только потом считаем, кто остался
+  for(const f of factions) if(!alive(f)) eliminate(f);
+  // победа — остался последней живой фракцией. После роспуска это и значит «чужих сил нет».
   const aliveF=factions.filter(alive);
   if(aliveF.length===1 && aliveF[0]==="player"){ outcome="win"; endGame(); }
 }
