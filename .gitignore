@@ -41,6 +41,8 @@ coverage/
 !.env.example
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+# служебная папка vercel link/dev с идентификаторами проекта; сам vercel.json — в репозитории
+.vercel/
 
 # ---------- Браузер и отладка ----------
 # карты исходников и профили, снятые из devtools
