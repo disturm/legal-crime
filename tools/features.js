@@ -362,12 +362,43 @@ function ok(name, cond, extra) {
   let deep = null;
   for (let dr = -3; dr <= 3 && !deep; dr++) for (let dc = -3; dc <= 3 && !deep; dc++) {
     const c = uc + dc, r = ur + dr;
+    if (Math.abs(dc) <= 1 && Math.abs(dr) <= 1) continue;   // вплотную видно всё, см. проверку ниже
     if (c < 1 || r < 1 || c >= COLS - 1 || r >= ROWS - 1) continue;
     if (!g.opaqueT(g.grid[r][c])) continue;
     if (!g.nextToWalk(c, r)) deep = [c, r];
   }
   ok("дом без выхода на дорогу не виден", !deep || !g.canSee("player", deep[0] * T + T / 2, deep[1] * T + T / 2),
     deep ? `клетка ${deep}` : "такого дома рядом не нашлось");
+
+  // Вытянутая рука: восемь соседних клеток видны из ЛЮБОЙ ходибельной. Лучом это не
+  // выходит — на диагонали он проходит ровно по стыку четырёх клеток, и угол дома его
+  // гасит, причём только с одной стороны (обзор был ещё и несимметричным); угловой дом
+  // не берёт и второй проход, он не примыкает к бойцу гранью. Без третьего прохода
+  // visFrom дыра была на пятой части клеток карты — чёрный тайл под носом у бойца.
+  {
+    let holes = 0, cells = 0, sample = "";
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      if (!g.passable(c, r)) continue;
+      cells++;
+      const set = new Set(g.visFrom(c, r, g.TYPES.shooter.sight));
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const nc = c + dc, nr = r + dr;
+        if (!g.inMap(nc, nr) || set.has(nr * COLS + nc)) continue;
+        holes++; sample = sample || `из [${c},${r}] не видно [${nc},${nr}] (тип ${g.grid[nr][nc]})`;
+      }
+    }
+    ok("вплотную к бойцу тумана нет: видны все 8 соседних клеток", holes === 0,
+      holes ? `${holes} дыр, напр. ${sample}` : `проверено ${cells} клеток`);
+  }
+  // то же самое через живой обзор фракции, а не только через visFrom
+  {
+    let holes = 0;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const c = uc + dc, r = ur + dr;
+      if (g.inMap(c, r) && !g.canSee("player", c * T + T / 2, r * T + T / 2)) holes++;
+    }
+    ok("соседние клетки видны и в живом тумане", holes === 0, `не видно ${holes} из 8`);
+  }
 
   // Своя точка — это свои люди на месте: обзор не хуже живого стрелка и во все стороны,
   // то есть со всех подходов, а не с одного случайного соседа непроходимой клетки.
