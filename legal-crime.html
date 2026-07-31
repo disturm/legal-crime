@@ -192,47 +192,370 @@ new ResizeObserver(resize).observe(stage); resize();
 
 // ---------- Карта города ----------
 const TILE=64;                 // размер клетки
-const COLS=26, ROWS=20;        // размер города в клетках
+const COLS=40, ROWS=30;        // размер города в клетках
 const WORLD_W=COLS*TILE, WORLD_H=ROWS*TILE;
-// grid: 0 = дорога, 1 = здание, 2 = бизнес (в бизнес и здание не зайти)
+// Алфавит клеток. Значения 0/1/2 исторические — их порядок менять нельзя.
+const T={ROAD:0, BLD:1, BIZ:2, WATER:3, BRIDGE:4, PARK:5, POND:6, PLAZA:7};
 const grid=[];
-const blockW=4, blockH=4;      // здания блоками, между ними дороги
-function buildGrid(){
-  grid.length=0;
-  for(let r=0;r<ROWS;r++){ grid[r]=[]; for(let c=0;c<COLS;c++){
-    const road = (r% (blockH+1)===0) || (c%(blockW+1)===0);
-    grid[r][c]= road?0:1;
-  }}
+// ТРИ НЕЗАВИСИМЫХ свойства клетки. Сводить их обратно в один предикат нельзя:
+// через воду видно и стреляют, но не ходят; через парк и ходят, и стреляют.
+function walkableT(t){ return t===T.ROAD||t===T.BRIDGE||t===T.PARK||t===T.PLAZA; }
+function opaqueT(t){ return t===T.BLD||t===T.BIZ; }    // луч держат только дом и заведение
+function buildableT(t){ return t===T.BLD; }
+function inMap(c,r){ return c>=0&&r>=0&&c<COLS&&r<ROWS; }
+function setT(c,r,t){ if(inMap(c,r)) grid[r][c]=t; }
+const D4=[[1,0],[-1,0],[0,1],[0,-1]];   // соседи по граням: и путь, и связность, и зона захвата
+
+// Улицы — списками, а не формулой: раньше формула дорог дублировалась в рендере разметки
+// и разъезжалась с сеткой. Теперь roadCols/roadRows — единственный источник истины.
+const roadCols=[], roadRows=[], isRoadCol=[], isRoadRow=[];
+const blocks=[];        // интерьеры кварталов между улицами: {c0,r0,c1,r1}
+const buildings=[];     // пятна застройки: {c0,r0,w,h,cells,shape,tone}
+
+// ---------- ГПСЧ карты (mulberry32) ----------
+// rnd() — ТОЛЬКО для генерации карты. Игровой дребезг (спавн, таймеры волн) остаётся на
+// Math.random: иначе один и тот же сид давал бы разные карты в зависимости от того,
+// сколько игра успела подёргаться до «Заново».
+let mapSeed=0, rngState=1;
+function srand(seed){ mapSeed=(seed>>>0)||1; rngState=mapSeed; }
+function rnd(){
+  rngState=(rngState+0x6D2B79F5)|0;
+  let t=rngState;
+  t=Math.imul(t^(t>>>15), t|1);
+  t^=t+Math.imul(t^(t>>>7), t|61);
+  return ((t^(t>>>14))>>>0)/4294967296;
 }
-function cellFree(c,r){ return c>=0&&r>=0&&c<COLS&&r<ROWS && grid[r][c]===0; }
+function ri(n){ return Math.floor(rnd()*n); }
+function rr(a,b){ return a+ri(b-a+1); }
+function pick(a){ return a[ri(a.length)]; }
+function chance(p){ return rnd()<p; }
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=ri(i+1); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+// ---------- Генератор карты ----------
+// Схема стандартная для городской процедурной генерации: сетка улиц → река → парки →
+// переулки → мосты со проверкой связности → нарезка кварталов на пятна застройки,
+// и всё это под «generate & test»: невалидная карта не правится, а перегенерируется.
+
+// 3.1 Улицы. Шаг переменный (интерьер квартала 3..6, изредка суперблок) — от этого
+// зависит и форма кварталов, и разнообразие домов внутри них.
+function streetLines(n){
+  const out=[0]; let p=0;
+  while(p+7 < n-1){ p+=chance(.12)?7:pick([4,5,5,6]); out.push(p); }
+  if(n-1-p < 3 && out.length>2) out.pop();          // слишком узкий остаток у края — убираем
+  out.push(n-1);
+  return out;
+}
+function streets(){
+  roadCols.length=0; roadRows.length=0;
+  isRoadCol.length=0; isRoadRow.length=0;
+  streetLines(COLS).forEach(c=>roadCols.push(c));
+  streetLines(ROWS).forEach(r=>roadRows.push(r));
+  for(let c=0;c<COLS;c++) isRoadCol[c]=false;
+  for(let r=0;r<ROWS;r++) isRoadRow[r]=false;
+  roadCols.forEach(c=>isRoadCol[c]=true);
+  roadRows.forEach(r=>isRoadRow[r]=true);
+  grid.length=0;
+  for(let r=0;r<ROWS;r++){ grid[r]=[];
+    for(let c=0;c<COLS;c++) grid[r][c]=(isRoadCol[c]||isRoadRow[r])?T.ROAD:T.BLD; }
+  blocks.length=0;
+  for(let i=0;i<roadRows.length-1;i++)for(let j=0;j<roadCols.length-1;j++){
+    const b={c0:roadCols[j]+1, r0:roadRows[i]+1, c1:roadCols[j+1]-1, r1:roadRows[i+1]-1};
+    if(b.c1>=b.c0&&b.r1>=b.r0) blocks.push(b);
+  }
+}
+function blockArea(b){ return (b.c1-b.c0+1)*(b.r1-b.r0+1); }
+function blockAllBld(b){
+  for(let r=b.r0;r<=b.r1;r++)for(let c=b.c0;c<=b.c1;c++) if(grid[r][c]!==T.BLD) return false;
+  return true;
+}
+function blocksNear(a,b){ return !(a.c1+2<b.c0||b.c1+2<a.c0||a.r1+2<b.r0||b.r1+2<a.r0); }
+
+// 3.2 Река. Главное русло в 2 клетки идёт от края до края и лестницей смещается в сторону —
+// ровно так ветви Chicago River рвут прямоугольную сетку. Развилка — узкий канал в 1 клетку.
+function carveChannel(vertical,start,width,from,to){
+  const cells=[];
+  const lim=(vertical?COLS:ROWS)-width-1;
+  let p=Math.max(1,Math.min(lim,start)), sinceJog=rr(2,5);
+  const step=to>=from?1:-1;
+  for(let a=from; a!==to+step; a+=step){
+    for(let w=0;w<width;w++){
+      const c=vertical?p+w:a, r=vertical?a:p+w;
+      if(inMap(c,r)){ grid[r][c]=T.WATER; cells.push([c,r]); }
+    }
+    if(--sinceJog<=0){                     // сдвиг ровно на клетку: русло остаётся связным
+      sinceJog=rr(3,6);
+      p=Math.max(1,Math.min(lim,p+(chance(.5)?1:-1)));
+    }
+  }
+  return cells;
+}
+function river(){
+  const vertical=chance(.5);
+  const long=vertical?ROWS:COLS, cross=vertical?COLS:ROWS;
+  const main=carveChannel(vertical, rr(Math.floor(cross*0.3), Math.floor(cross*0.62)), 2, 0, long-1);
+  const [mc,mr]=main[Math.floor(main.length*(0.35+rnd()*0.35))];
+  const len=rr(8,16), away=chance(.5)?1:-1;
+  // развилка прямая, без лестницы: параллельный уход обратно к руслу отрезал бы остров
+  if(vertical) carveChannel(false, mr, 1, mc, Math.max(0,Math.min(COLS-1, mc+away*len)));
+  else         carveChannel(true,  mc, 1, mr, Math.max(0,Math.min(ROWS-1, mr+away*len)));
+}
+
+// 3.4 Парки: целый квартал (иногда его часть) под траву, внутри пруд с гарантированным
+// отступом травы — поэтому пруд не может отрезать подход ни к чему.
+function pond(p){
+  const w=p.c1-p.c0+1, h=p.r1-p.r0+1;
+  if(w<3||h<3) return;                                   // на отступ травы места нет
+  const pw=rr(1,Math.min(3,w-2)), ph=rr(1,Math.min(2,h-2));
+  const c0=p.c0+1+ri(w-2-pw+1), r0=p.r0+1+ri(h-2-ph+1);
+  for(let r=r0;r<r0+ph;r++)for(let c=c0;c<c0+pw;c++) setT(c,r,T.POND);
+  if(pw>=3&&ph>=2&&chance(.6)){ setT(c0,r0,T.PARK); setT(c0+pw-1,r0,T.PARK); }  // срезанные углы
+}
+function parks(){
+  const cand=shuffle(blocks.filter(b=>blockAllBld(b)&&blockArea(b)>=6));
+  cand.sort((a,b)=>blockArea(b)-blockArea(a));   // уклон в крупные, среди равных — случайно
+  const want=Math.min(4, Math.max(2, Math.round(blocks.length*0.12)));
+  const taken=[];
+  for(const b of cand){
+    if(taken.length>=want) break;
+    if(taken.some(t=>blocksNear(t,b))) continue;
+    const p={c0:b.c0,r0:b.r0,c1:b.c1,r1:b.r1};
+    if(p.c1-p.c0+1>=5&&chance(.35))      { if(chance(.5)) p.c1-=2; else p.c0+=2; }
+    else if(p.r1-p.r0+1>=5&&chance(.35)) { if(chance(.5)) p.r1-=2; else p.r0+=2; }
+    for(let r=p.r0;r<=p.r1;r++)for(let c=p.c0;c<=p.c1;c++) setT(c,r,T.PARK);
+    pond(p);
+    taken.push(b);
+  }
+}
+
+// 3.5 Переулки. Клетка переулка — это ROAD, но её нет в roadCols/roadRows, поэтому она
+// рисуется темнее и без осевой разметки. Отдельный тип клетки не нужен.
+function alleys(){
+  for(const b of blocks){
+    const w=b.c1-b.c0+1, h=b.r1-b.r0+1;
+    if(Math.max(w,h)<4||!blockAllBld(b)||!chance(.45)) continue;
+    if(w>=h){ const c=b.c0+((w-1)>>1); for(let r=b.r0;r<=b.r1;r++) grid[r][c]=T.ROAD; }
+    else    { const r=b.r0+((h-1)>>1); for(let c=b.c0;c<=b.c1;c++) grid[r][c]=T.ROAD; }
+  }
+}
+
+// 3.3 Мосты. Кандидат — короткий прогон воды по линии улицы, с землёй по обе стороны.
+// Мост шириной ровно в одну клетку: через главное русло это прогон 1x2, через канал 1x1.
+const MAX_BRIDGES=6;
+function bridgeCandidates(){
+  const out=[], K=(c,r)=>r*COLS+c;
+  roadRows.forEach(r=>{
+    for(let c=0;c<COLS;){
+      if(grid[r][c]!==T.WATER){ c++; continue; }
+      let e=c; while(e<COLS&&grid[r][e]===T.WATER) e++;
+      if(e-c<=3&&c>0&&e<COLS&&walkableT(grid[r][c-1])&&walkableT(grid[r][e]))
+        out.push({c0:c,r0:r,c1:e-1,r1:r,a:K(c-1,r),z:K(e,r),open:false});
+      c=e;
+    }
+  });
+  roadCols.forEach(c=>{
+    for(let r=0;r<ROWS;){
+      if(grid[r][c]!==T.WATER){ r++; continue; }
+      let e=r; while(e<ROWS&&grid[e][c]===T.WATER) e++;
+      if(e-r<=3&&r>0&&e<ROWS&&walkableT(grid[r-1][c])&&walkableT(grid[e][c]))
+        out.push({c0:c,r0:r,c1:c,r1:e-1,a:K(c,r-1),z:K(c,e),open:false});
+      r=e;
+    }
+  });
+  return out;
+}
+function openBridge(b){
+  for(let r=b.r0;r<=b.r1;r++)for(let c=b.c0;c<=b.c1;c++) grid[r][c]=T.BRIDGE;
+  b.open=true;
+}
+// компоненты связности по ходибельным клеткам — ими же проверяется, что берега сшиты
+function landComponents(){
+  const comp=new Int32Array(COLS*ROWS).fill(-1);
+  const sizes=[];
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    if(comp[r*COLS+c]>=0||!walkableT(grid[r][c])) continue;
+    const id=sizes.length; let n=0;
+    const q=[[c,r]]; comp[r*COLS+c]=id;
+    while(q.length){
+      const [cc,cr]=q.pop(); n++;
+      for(const [dc,dr] of D4){
+        const nc=cc+dc, nr=cr+dr;
+        if(!inMap(nc,nr)||comp[nr*COLS+nc]>=0||!walkableT(grid[nr][nc])) continue;
+        comp[nr*COLS+nc]=id; q.push([nc,nr]);
+      }
+    }
+    sizes.push(n);
+  }
+  return {comp, sizes};
+}
+function bridges(){
+  const cand=shuffle(bridgeCandidates());
+  // сперва открываем меньшую часть переправ: мост должен быть редким — это чокпоинт
+  const want=Math.min(MAX_BRIDGES, Math.max(2, Math.round(cand.length*0.45)));
+  for(let i=0;i<cand.length&&i<want;i++) openBridge(cand[i]);
+  // ...а дальше добираем ровно столько, сколько нужно, чтобы берега стали одной землёй
+  for(let guard=0;guard<40;guard++){
+    const {comp,sizes}=landComponents();
+    if(sizes.length<=1) return;
+    let next=null;
+    for(const b of cand){
+      if(b.open) continue;
+      const a=comp[b.a], z=comp[b.z];
+      if(a>=0&&z>=0&&a!==z){ next=b; break; }
+    }
+    if(!next) return;
+    openBridge(next);
+  }
+}
+// Обрывки набережной, до которых уже не добраться, уходят под воду: иначе они навсегда
+// оставляют карту многосвязной, а nearestPassable умеет закинуть в них юнита.
+function clearOrphans(){
+  const {comp,sizes}=landComponents();
+  if(sizes.length<=1) return;
+  let main=0;
+  for(let i=1;i<sizes.length;i++) if(sizes[i]>sizes[main]) main=i;
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    const id=comp[r*COLS+c];
+    if(id>=0&&id!==main&&sizes[id]<8) grid[r][c]=T.WATER;
+  }
+}
+
+// 3.6 Формы зданий. Квартал нарезается рекурсивно (guillotine / OBB-parcelling), пока пятно
+// не влезет в палитру нормальных домов: 1x1..1x3, 2x2..2x4, 3x3, 3x4. Дальше на пятно
+// накладывается шаблон формы — срезанный угол (L) или выемка в середине грани (U),
+// и выемка становится площадью при доме.
+const MAX_SIDE=4, BLD_TONES=4;
+function splitPos(n){
+  const lo=Math.max(1,Math.min(2,n-2)), hi=Math.max(lo,Math.min(n-1,MAX_SIDE));
+  return rr(lo,hi);
+}
+function emitBuilding(c,r,w,h){
+  const cut=[];
+  let shape="rect";
+  if(w>=2&&h>=2&&chance(.22)){
+    shape="L"; cut.push(pick([[c,r],[c+w-1,r],[c,r+h-1],[c+w-1,r+h-1]]));
+  }else if(Math.max(w,h)>=3&&chance(.18)){
+    shape="U";
+    if(w>=3) cut.push([c+((w-1)>>1), chance(.5)?r:r+h-1]);
+    else     cut.push([chance(.5)?c:c+w-1, r+((h-1)>>1)]);
+  }
+  // срезаем только то, что выходит на проходимое: иначе получится глухой карман,
+  // до которого не дойти, и лишняя компонента связности
+  let carved=false;
+  for(const [cc,cr] of cut) if(nextToWalk(cc,cr)){ grid[cr][cc]=T.PLAZA; carved=true; }
+  if(!carved) shape="rect";
+  const cells=[];
+  for(let cr=r;cr<r+h;cr++)for(let cc=c;cc<c+w;cc++) if(grid[cr][cc]===T.BLD) cells.push([cc,cr]);
+  if(!cells.length) return;
+  if(cells.length>=2&&chance(.05)&&cells.some(([cc,cr])=>nextToWalk(cc,cr))){
+    cells.forEach(([cc,cr])=>{ grid[cr][cc]=T.PLAZA; });   // весь участок — городская площадь
+    return;
+  }
+  buildings.push({c0:c,r0:r,w,h,cells,shape,tone:ri(BLD_TONES),
+                  keys:new Set(cells.map(([cc,cr])=>cr*COLS+cc))});
+}
+function subdivide(c,r,w,h){
+  const long=Math.max(w,h), short=Math.min(w,h);
+  const tooBig=long>MAX_SIDE||w*h>12;
+  const tooThin=long>=4&&short===1;            // 1x4 и уже — это забор, а не дом
+  if((tooBig||tooThin)&&long>=2){
+    if(w>=h){ const k=splitPos(w); subdivide(c,r,k,h); subdivide(c+k,r,w-k,h); }
+    else    { const k=splitPos(h); subdivide(c,r,w,k); subdivide(c,r+k,w,h-k); }
+    return;
+  }
+  emitBuilding(c,r,w,h);
+}
+function blockShapes(){
+  buildings.length=0;
+  const used=new Uint8Array(COLS*ROWS);
+  const free=(c,r)=>grid[r][c]===T.BLD&&!used[r*COLS+c];
+  for(const b of blocks){
+    for(let r=b.r0;r<=b.r1;r++)for(let c=b.c0;c<=b.c1;c++){
+      if(!free(c,r)) continue;
+      // максимальный свободный прямоугольник от угла остатка: так переживаем и парк
+      // на половину квартала, и переулок, и русло, прошедшее через кварталы
+      let w=0; while(c+w<=b.c1&&free(c+w,r)) w++;
+      let h=1;
+      grow: while(r+h<=b.r1){
+        for(let k=0;k<w;k++) if(!free(c+k,r+h)) break grow;
+        h++;
+      }
+      for(let cr=r;cr<r+h;cr++)for(let cc=c;cc<c+w;cc++) used[cr*COLS+cc]=1;
+      subdivide(c,r,w,h);
+    }
+  }
+}
+
+// 3.8 Generate & test: невалидная карта перегенерируется на следующем сиде.
+function buildTerrain(){ streets(); river(); parks(); alleys(); bridges(); clearOrphans(); blockShapes(); }
+function plainGrid(){ streets(); blockShapes(); }     // страховка: партия обязана начаться
+function bizSpots(){
+  const out=[];
+  for(let r=1;r<ROWS-1;r++)for(let c=1;c<COLS-1;c++)
+    if(buildableT(grid[r][c])&&nextToWalk(c,r)) out.push([c,r]);
+  return out;
+}
+function validateTerrain(){
+  if(landComponents().sizes.length!==1) return false;
+  const seen=new Set();
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++) seen.add(grid[r][c]);
+  if(![T.WATER,T.BRIDGE,T.PARK,T.PLAZA].every(t=>seen.has(t))) return false;
+  if(new Set(buildings.map(b=>b.w+"x"+b.h)).size<3) return false;
+  return bizSpots().length>=BIZ_CAP;
+}
+function validateBiz(){
+  if(businesses.length<Math.max(12,factions.length*4)) return false;
+  if(!businesses.every(b=>captureSpots(b).length)) return false;
+  const hqs=factions.map(f=>factionHQ(f));
+  if(hqs.some(h=>!h)) return false;
+  // штабы должны быть взаимно достижимы — иначе партия не может кончиться
+  const s=captureSpots(hqs[0])[0];
+  return hqs.slice(1).every(h=>{
+    const d=captureSpots(h)[0];
+    return !!findPath(s.x,s.y,d.x,d.y);
+  });
+}
+function genMap(seed){
+  const base=(seed>>>0)||1;
+  for(let k=0;k<24;k++){
+    srand(base+k*7919);
+    buildTerrain();
+    if(!validateTerrain()) continue;
+    placeBiz();
+    if(validateBiz()) return;
+  }
+  srand(base); plainGrid(); placeBiz();
+}
 
 // Раскидываем бизнесы по зданиям
 const BIZ_NAMES=["Бар","Казино","Ломбард","Клуб","Автосервис","Пиццерия","Отель","Банк","Аптека","Кофейня","Салон","Магазин"];
+const BIZ_CAP=34, BIZ_GAP=4;
 const businesses=[];
-function nextToRoad(c,r){
-  return (r>0&&grid[r-1][c]===0)||(r<ROWS-1&&grid[r+1][c]===0)||
-         (c>0&&grid[r][c-1]===0)||(c<COLS-1&&grid[r][c+1]===0);
+// «Есть куда подойти»: хотя бы один ортогональный сосед ходибелен. Вода и пруд в соседях
+// не считаются — иначе заведение окажется без единой точки захвата.
+function nextToWalk(c,r){
+  return passable(c,r-1)||passable(c,r+1)||passable(c-1,r)||passable(c+1,r);
 }
 // Расстановка бизнесов и их владельцев под текущий список фракций.
 function placeBiz(){
   businesses.length=0;
-  const spots=[];
-  // бизнес всегда на краю квартала — иначе к нему не подойти
-  for(let r=1;r<ROWS-1;r++)for(let c=1;c<COLS-1;c++) if(grid[r][c]===1 && nextToRoad(c,r)) spots.push([c,r]);
-  for(let i=spots.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[spots[i],spots[j]]=[spots[j],spots[i]];}
-  // разносим точки по карте, чтобы не липли друг к другу; плотнее, чем раньше
-  const picked=[];
+  // бизнес — одна клетка дома, всегда на его фасаде: иначе к нему не подойти
+  const spots=shuffle(bizSpots());
+  const picked=[], perBld=new Map();
   for(const s of spots){
-    if(picked.length>=22) break;
-    if(picked.every(p=>Math.abs(p[0]-s[0])+Math.abs(p[1]-s[1])>=3)) picked.push(s);
+    if(picked.length>=BIZ_CAP) break;
+    if(!picked.every(p=>Math.abs(p[0]-s[0])+Math.abs(p[1]-s[1])>=BIZ_GAP)) continue;
+    // не больше двух точек на одно пятно застройки, иначе дом 2x4 — торговый центр
+    const bi=buildings.findIndex(b=>b.cells.some(([cc,cr])=>cc===s[0]&&cr===s[1]));
+    if(bi>=0){ if((perBld.get(bi)||0)>=2) continue; perBld.set(bi,(perBld.get(bi)||0)+1); }
+    picked.push(s);
   }
   // создаём все точки нейтральными
   for(let i=0;i<picked.length;i++){
-    const [c,r]=picked[i]; grid[r][c]=2;
+    const [c,r]=picked[i]; grid[r][c]=T.BIZ;
     businesses.push({
       c,r, x:c*TILE+TILE/2, y:r*TILE+TILE/2,
       name:BIZ_NAMES[i%BIZ_NAMES.length],
-      income: 4+Math.floor(Math.random()*6),   // базовый $/сек; у улучшенной точки не используется
+      income: 4+ri(6),                         // базовый $/сек; у улучшенной точки не используется
       kind:null,                               // тип заведения после улучшения — ключ UPGRADES
       owner:"neutral", hq:null,
       capture:0, capBy:null,                    // 0..100 — прогресс захвата фракцией capBy
@@ -371,11 +694,12 @@ function spawnUnit(type,x,y,team,role){
 
 // ---------- Инициализация мира: строится заново при каждой новой партии ----------
 const START_MONEY=360, DEFAULT_AI=2;
-function initWorld(aiCount){
+function initWorld(aiCount,seed){
   aiCount=Math.max(1,Math.min(3,aiCount||1));
   factions=["player"].concat(AI_KEYS.slice(0,aiCount));
-  buildGrid();
-  placeBiz();
+  // genMap чистит grid/blocks/buildings/roadCols/roadRows «на месте» и сам зовёт placeBiz:
+  // расстановка точек — часть валидации карты, невалидная перегенерируется на другом сиде.
+  genMap(seed===undefined ? (Math.random()*1e9|0) : seed);
   resetUnlocks();
   resetFunds();                      // кошелёк, доход и расход — на каждую сторону
   resetAiFavor();                    // любимый тип рынка у каждого ИИ на эту партию
@@ -727,8 +1051,13 @@ function enemyAI(dt){
       units.forEach(p=>{ if(p.team!==me&&p.hp>0&&canSee(me,p.x,p.y)){
         const d=Math.hypot(p.x-u.x,p.y-u.y); if(d<nd){nd=d;ne=p;}}});
       if(ne){ u.target=ne; u.order="attack"; setDest(u,ne.x,ne.y); return; }
-      if(targets.length){ let bb=targets[0],bd=1e9;
-        targets.forEach(b=>{const d=Math.hypot(b.x-u.x,b.y-u.y);if(d<bd){bd=d;bb=b;}});
+      if(targets.length){
+        // ближайшая ПО ДОРОГАМ, а не по прямой: цель за каналом только выглядит близкой
+        const df=distFrom(u.x,u.y);
+        let bb=null,bd=Infinity;
+        targets.forEach(b=>{const d=stepsTo(df,b);if(d<bd){bd=d;bb=b;}});
+        if(!bb){ bd=1e9; bb=targets[0];      // всё недостижимо — падаем на прямую
+          targets.forEach(b=>{const d=Math.hypot(b.x-u.x,b.y-u.y);if(d<bd){bd=d;bb=b;}}); }
         u.captureBiz=bb; u.order="capture";
         // идём не «куда-то к зданию», а в точку перед гранью — только оттуда берётся захват
         const sp=captureSpots(bb);
@@ -740,7 +1069,7 @@ function enemyAI(dt){
   // волны подкреплений: у каждой фракции свой приток, зависящий от её территории
   waveTimer-=dt;
   if(waveTimer<=0){
-    wave++; waveTimer=18+Math.random()*8;
+    wave++; waveTimer=12+Math.random()*6;
     aiTeams().forEach(me=>{
       const edge=businesses.filter(b=>b.owner===me);
       if(!edge.length) return;                     // земли нет — некому платить бойцам
@@ -754,10 +1083,10 @@ function enemyAI(dt){
       // Убери его — и одинокий ИИ, забравший всю карту, окажется сильнее троих.
       // Прежняя тройка была ниже стартовых сил ИИ; с отрядом из двух бойцов она
       // превратилась бы в бесплатную фору, отсюда 2.
-      const cap=2+Math.floor(edge.length*0.75);
+      const cap=3+Math.floor(edge.length*1.1);
       if(atk>=cap) return;
       const from=edge[Math.floor(Math.random()*edge.length)];
-      const n=Math.min(3,1+Math.floor(edge.length/3), cap-atk);
+      const n=Math.min(5,1+Math.floor(edge.length/2), cap-atk);
       for(let i=0;i<n;i++){
         let t="bouncer";                            // закрытые классы ИИ тоже не нанимает
         if(unlocks[me].sniper&&Math.random()<0.2) t="sniper";
@@ -769,15 +1098,18 @@ function enemyAI(dt){
 }
 
 // ---------- Навигация: BFS по клеткам ----------
-// проходима только дорога: и дом (1), и бизнес (2) непроходимы — «в бизнес не зайти»
-function passable(c,r){ return c>=0&&r>=0&&c<COLS&&r<ROWS && grid[r][c]===0; }
-// линия огня: сквозь дом/бизнес стрелять нельзя, по дорогам — можно
+// Ноги: дорога, мост, парк и площадь. В дом, заведение, воду и пруд не зайти.
+function passable(c,r){ return inMap(c,r) && walkableT(grid[r][c]); }
+// Луч (и пуля, и взгляд): держат только дом и заведение. Через канал, пруд и парк
+// прекрасно видно и стреляют — поэтому это ОТДЕЛЬНЫЙ предикат, а не !passable.
+function blocksSight(c,r){ return !inMap(c,r) || opaqueT(grid[r][c]); }
+// линия огня: сквозь дом/заведение стрелять нельзя, через воду и парк — можно
 function hasLOS(x1,y1,x2,y2){
   const dx=x2-x1, dy=y2-y1, dist=Math.hypot(dx,dy);
   const steps=Math.max(1,Math.ceil(dist/(TILE*0.25)));
   for(let i=1;i<steps;i++){                 // концы (сами юниты на дороге) не проверяем
     const x=x1+dx*i/steps, y=y1+dy*i/steps;
-    if(!passable(Math.floor(x/TILE),Math.floor(y/TILE))) return false;
+    if(blocksSight(Math.floor(x/TILE),Math.floor(y/TILE))) return false;
   }
   return true;
 }
@@ -800,12 +1132,11 @@ function findPath(sx,sy,gx,gy){
   const prev=new Int32Array(COLS*ROWS).fill(-1);
   const seen=new Uint8Array(COLS*ROWS);
   const q=[s]; seen[key(s[0],s[1])]=1;
-  const D=[[1,0],[-1,0],[0,1],[0,-1]];
   let found=false;
   while(q.length){
     const [c,r]=q.shift();
     if(c===g[0]&&r===g[1]){ found=true; break; }
-    for(const [dc,dr] of D){
+    for(const [dc,dr] of D4){
       const nc=c+dc, nr=r+dr;
       if(!passable(nc,nr)) continue;
       const k=key(nc,nr); if(seen[k]) continue;
@@ -822,6 +1153,40 @@ function findPath(sx,sy,gx,gy){
   path.reverse();
   if(path.length) path[path.length-1]={x:gx,y:gy};  // финальная точка — точная
   return path;
+}
+// Волна BFS от точки: расстояние в шагах до всех достижимых клеток, -1 — недостижимо.
+// Нужна ИИ, чтобы «ближайшая точка» считалась ПО ДОРОГАМ: с каналом ближайшая по прямой
+// цель постоянно лежит на другом берегу, и отряд уходит стоять в набережную. Планировка
+// города известна всем по условию тумана, так что это не читерство, а умение ходить.
+// Буфер один: результат надо использовать до следующего вызова.
+const _distBuf=new Int32Array(COLS*ROWS);
+function distFrom(x,y){
+  _distBuf.fill(-1);
+  const p=nearestPassable(Math.floor(x/TILE),Math.floor(y/TILE));
+  if(!p) return _distBuf;
+  const s=p[1]*COLS+p[0];
+  _distBuf[s]=0;
+  const q=[s];
+  for(let i=0;i<q.length;i++){
+    const k=q[i], kc=k%COLS, kr=(k-kc)/COLS;
+    for(const [dc,dr] of D4){
+      const nc=kc+dc, nr=kr+dr;
+      if(!passable(nc,nr)) continue;
+      const nk=nr*COLS+nc;
+      if(_distBuf[nk]>=0) continue;
+      _distBuf[nk]=_distBuf[k]+1; q.push(nk);
+    }
+  }
+  return _distBuf;
+}
+// расстояние до заведения — по его точкам захвата: в само заведение не зайти
+function stepsTo(df,b){
+  let best=Infinity;
+  for(const s of captureSpots(b)){
+    const d=df[Math.floor(s.y/TILE)*COLS+Math.floor(s.x/TILE)];
+    if(d>=0&&d<best) best=d;
+  }
+  return best;
 }
 function setDest(u,x,y){
   u.tx=x; u.ty=y;
@@ -875,7 +1240,7 @@ const FOG_SOFT=true;                 // мягкая кромка тумана; 
 const vis={};                        // vis[фракция] = Uint8Array(COLS*ROWS), 1 = клетка видна сейчас
 const losCache=new Map();            // «из клетки X с радиусом R видны такие-то клетки»
 
-// Карта внутри партии не меняется, а бойцы стоят только на дорогах — вариантов немного,
+// Карта внутри партии не меняется, а бойцы стоят только на ходибельных клетках — вариантов немного,
 // поэтому обзор из клетки считается один раз лучами и дальше берётся из кэша.
 // Кэш ОБЯЗАН чиститься в initWorld: иначе он будет светить сквозь дома новой карты.
 function visFrom(c,r,R){
@@ -884,26 +1249,28 @@ function visFrom(c,r,R){
   let list=losCache.get(key);
   if(list) return list;
   const x0=c*TILE+TILE/2, y0=r*TILE+TILE/2;
-  // Проход 1 — дороги: луч тем же правилом, что и стрельба.
-  const road=new Set();
+  // Проход 1 — всё прозрачное (улицы, мосты, парки, вода): луч тем же правилом, что и стрельба.
+  const lit=new Set();
   for(let dr=-rad;dr<=rad;dr++)for(let dc=-rad;dc<=rad;dc++){
     const nc=c+dc, nr=r+dr;
-    if(!passable(nc,nr)) continue;
+    if(blocksSight(nc,nr)) continue;
     const x=nc*TILE+TILE/2, y=nr*TILE+TILE/2;
     if(Math.hypot(x-x0,y-y0)>R) continue;
-    if(hasLOS(x0,y0,x,y)) road.add(nr*COLS+nc);
+    if(hasLOS(x0,y0,x,y)) lit.add(nr*COLS+nc);
   }
   // Проход 2 — дома и заведения: лучом их не взять (он упирается в них же),
-  // поэтому стена видна, если видна примыкающая к ней дорога — «витрину видно с улицы».
-  // Те же четыре грани, что и у captureSpots: подойти и разглядеть — одно и то же.
-  const out=[...road];
+  // поэтому стена видна, если видна примыкающая к ней ХОДИБЕЛЬНАЯ клетка — «витрину
+  // видно с улицы». Те же четыре грани, что и у captureSpots: подойти и разглядеть —
+  // одно и то же. Именно поэтому проверка на walkableT, а не просто «клетка видна»:
+  // иначе витрину читали бы с другого берега канала, куда не подойти.
+  const out=[...lit];
+  const seenWalk=(nc,nr)=>inMap(nc,nr)&&lit.has(nr*COLS+nc)&&walkableT(grid[nr][nc]);
   for(let dr=-rad;dr<=rad;dr++)for(let dc=-rad;dc<=rad;dc++){
     const nc=c+dc, nr=r+dr;
-    if(nc<0||nr<0||nc>=COLS||nr>=ROWS||passable(nc,nr)) continue;
+    if(!inMap(nc,nr)||!opaqueT(grid[nr][nc])) continue;
     const x=nc*TILE+TILE/2, y=nr*TILE+TILE/2;
     if(Math.hypot(x-x0,y-y0)>R+TILE*0.5) continue;
-    if(road.has(nr*COLS+nc-COLS)||road.has(nr*COLS+nc+COLS)||
-       (nc>0&&road.has(nr*COLS+nc-1))||(nc<COLS-1&&road.has(nr*COLS+nc+1))) out.push(nr*COLS+nc);
+    if(seenWalk(nc,nr-1)||seenWalk(nc,nr+1)||seenWalk(nc-1,nr)||seenWalk(nc+1,nr)) out.push(nr*COLS+nc);
   }
   list=Int32Array.from(out); losCache.set(key,list);
   return list;
@@ -1177,6 +1544,104 @@ function showOver(win){
 ovAgain.onclick=showStart;
 
 // ---------- Рендер ----------
+// Палитры рельефа. Вся графика — код: ни картинок, ни паттернов, ни внешних ассетов.
+const COL_ROAD="#2b303c", COL_ALLEY="#232832", COL_PLAZA="#39414d";
+const COL_WATER="#1c3a4a", COL_WATER_HI="rgba(126,190,214,.20)", COL_QUAY="#2a3542";
+const COL_PARK="#20402a", COL_PARK_ALT="#24472e", COL_POND="#1d3f4c";
+const COL_BRIDGE="#4a4438", COL_RAIL="#6e6552";
+const BLD_BODY=["#33404f","#374355","#2f3b49","#3a4658"];
+const BLD_ROOF=["#3c4a5c","#414f63","#374453","#445273"];
+
+// «Клетка — часть настоящей улицы» отличает проспект от переулка внутри квартала.
+function onStreet(c,r){ return isRoadCol[c]||isRoadRow[r]; }
+function drawCell(c,r,g){
+  const x=c*TILE, y=r*TILE;
+  switch(g){
+    case T.WATER: case T.POND: {
+      ctx.fillStyle = g===T.POND?COL_POND:COL_WATER; ctx.fillRect(x,y,TILE,TILE);
+      // набережная: кромка рисуется только там, где вода упирается в берег
+      ctx.fillStyle=COL_QUAY;
+      if(!isWet(c,r-1)) ctx.fillRect(x,y,TILE,3);
+      if(!isWet(c,r+1)) ctx.fillRect(x,y+TILE-3,TILE,3);
+      if(!isWet(c-1,r)) ctx.fillRect(x,y,3,TILE);
+      if(!isWet(c+1,r)) ctx.fillRect(x+TILE-3,y,3,TILE);
+      // блики: фаза детерминированно от координат, иначе вода задрожит от кадра к кадру
+      ctx.fillStyle=COL_WATER_HI;
+      const ph=((c*7+r*13)%4)*6;
+      ctx.fillRect(x+8+ph, y+18, 22, 2);
+      ctx.fillRect(x+22-ph, y+40, 16, 2);
+      break;
+    }
+    case T.BRIDGE: {
+      ctx.fillStyle=COL_WATER; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle=COL_BRIDGE; ctx.fillRect(x+1,y+1,TILE-2,TILE-2);
+      ctx.fillStyle=COL_RAIL;
+      // перила вдоль моста: поперёк того направления, куда мост ведёт
+      if(isRoadRow[r]){ ctx.fillRect(x,y+4,TILE,3); ctx.fillRect(x,y+TILE-7,TILE,3); }
+      else            { ctx.fillRect(x+4,y,3,TILE); ctx.fillRect(x+TILE-7,y,3,TILE); }
+      break;
+    }
+    case T.PARK: {
+      ctx.fillStyle=COL_PARK; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle=COL_PARK_ALT;                      // подстриженные полосы газона
+      for(let i=(c+r)%2;i<4;i+=2) ctx.fillRect(x,y+i*16,TILE,8);
+      // клумбы нарисованы плоскими: объект, похожий на укрытие, но не режущий LOS, — обман
+      if((c*5+r*3)%4===0){ ctx.fillStyle="rgba(196,164,90,.35)"; ctx.fillRect(x+24,y+24,16,16); }
+      break;
+    }
+    case T.PLAZA: {
+      ctx.fillStyle=COL_PLAZA; ctx.fillRect(x,y,TILE,TILE);
+      ctx.strokeStyle="rgba(200,212,230,.09)"; ctx.lineWidth=1;
+      ctx.strokeRect(x+0.5,y+0.5,TILE/2,TILE/2); ctx.strokeRect(x+TILE/2+0.5,y+TILE/2+0.5,TILE/2-1,TILE/2-1);
+      break;
+    }
+    default:                                            // дорога, переулок и низ застройки
+      ctx.fillStyle = onStreet(c,r)?COL_ROAD:COL_ALLEY;
+      ctx.fillRect(x,y,TILE,TILE);
+  }
+}
+function isWet(c,r){ const g=inMap(c,r)?grid[r][c]:-1; return g===T.WATER||g===T.POND||g===T.BRIDGE; }
+// осевая линия улицы отрезками: прерывается там, где улицу перерезала вода
+function dashRuns(a0,a1,horiz,fixed){
+  let a=a0;
+  while(a<a1){
+    while(a<a1 && isWet(horiz?a:fixed, horiz?fixed:a)) a++;
+    let e=a;
+    while(e<a1 && !isWet(horiz?e:fixed, horiz?fixed:e)) e++;
+    if(e-a>=1){
+      ctx.beginPath();
+      if(horiz){ ctx.moveTo(a*TILE, fixed*TILE+TILE/2); ctx.lineTo(e*TILE, fixed*TILE+TILE/2); }
+      else     { ctx.moveTo(fixed*TILE+TILE/2, a*TILE); ctx.lineTo(fixed*TILE+TILE/2, e*TILE); }
+      ctx.stroke();
+    }
+    a=e+1;
+  }
+}
+// Дом рисуется по своему пятну целиком: корпус, полоса крыши и окна по фасадам.
+// Тон берётся из b.tone, поэтому соседние дома в квартале различаются.
+function drawBuilding(b){
+  ctx.fillStyle=BLD_BODY[b.tone%BLD_BODY.length];
+  b.cells.forEach(([c,r])=>{
+    const x=c*TILE, y=r*TILE;
+    // зазор рисуем только к не-дому: внутри пятна клетки сливаются в одну массу
+    const l=own(b,c-1,r)?0:3, t=own(b,c,r-1)?0:3, rt=own(b,c+1,r)?0:3, bt=own(b,c,r+1)?0:3;
+    ctx.fillRect(x+l, y+t, TILE-l-rt, TILE-t-bt);
+  });
+  ctx.fillStyle=BLD_ROOF[b.tone%BLD_ROOF.length];
+  b.cells.forEach(([c,r])=>{
+    if(own(b,c,r-1)) return;                        // полоса крыши — только по верхнему краю пятна
+    const x=c*TILE, y=r*TILE;
+    const l=own(b,c-1,r)?0:3, rt=own(b,c+1,r)?0:3;
+    ctx.fillRect(x+l, y+3, TILE-l-rt, 6);
+  });
+  ctx.fillStyle="rgba(120,150,180,.18)";
+  b.cells.forEach(([c,r])=>{
+    const x=c*TILE, y=r*TILE;
+    for(let wy=0;wy<2;wy++)for(let wx=0;wx<2;wx++) ctx.fillRect(x+12+wx*22, y+16+wy*20, 12, 12);
+  });
+}
+function own(b,c,r){ return inMap(c,r)&&b.keys.has(r*COLS+c); }
+
 function draw(){
   ctx.setTransform(1,0,0,1,0,0);
   ctx.fillStyle="#0b0d12"; ctx.fillRect(0,0,W,H);
@@ -1190,24 +1655,19 @@ function draw(){
   ctx.fillStyle="#20242e";
   ctx.fillRect(c0*TILE,r0*TILE,(c1-c0)*TILE,(r1-r0)*TILE);
 
-  // клетки
-  for(let r=r0;r<r1;r++)for(let c=c0;c<c1;c++){
-    const x=c*TILE,y=r*TILE,g=grid[r][c];
-    if(g===0){ // дорога
-      ctx.fillStyle="#2b303c"; ctx.fillRect(x,y,TILE,TILE);
-    }else{ // здание
-      ctx.fillStyle="#33404f"; ctx.fillRect(x+3,y+3,TILE-6,TILE-6);
-      ctx.fillStyle="#3c4a5c"; ctx.fillRect(x+3,y+3,TILE-6,6);
-      // окошки
-      ctx.fillStyle="rgba(120,150,180,.18)";
-      for(let wy=0;wy<2;wy++)for(let wx=0;wx<2;wx++) ctx.fillRect(x+12+wx*22,y+16+wy*20,12,12);
-    }
-  }
-  // дорожная разметка
+  // рельеф по клеткам; застройка идёт следующим проходом, пятнами целиком
+  for(let r=r0;r<r1;r++)for(let c=c0;c<c1;c++) drawCell(c,r,grid[r][c]);
+  // дорожная разметка: только по настоящим улицам и с разрывом на воде — осевая не должна
+  // ложиться поперёк канала, а у переулка её нет вовсе
   ctx.strokeStyle="rgba(232,193,74,.28)"; ctx.lineWidth=2; ctx.setLineDash([10,12]);
-  for(let r=r0;r<=r1;r++) if(r%(blockH+1)===0){ ctx.beginPath(); ctx.moveTo(c0*TILE,r*TILE+TILE/2); ctx.lineTo(c1*TILE,r*TILE+TILE/2); ctx.stroke(); }
-  for(let c=c0;c<=c1;c++) if(c%(blockW+1)===0){ ctx.beginPath(); ctx.moveTo(c*TILE+TILE/2,r0*TILE); ctx.lineTo(c*TILE+TILE/2,r1*TILE); ctx.stroke(); }
+  for(let r=r0;r<r1;r++) if(isRoadRow[r]) dashRuns(c0,c1,true,r);
+  for(let c=c0;c<c1;c++) if(isRoadCol[c]) dashRuns(r0,r1,false,c);
   ctx.setLineDash([]);
+  // застройка — по пятнам: дом 2x4 читается одной массой, а не четырьмя коробками
+  buildings.forEach(b=>{
+    if(b.c0>=c1||b.r0>=r1||b.c0+b.w<=c0||b.r0+b.h<=r0) return;
+    drawBuilding(b);
+  });
 
   // куда нацелены выделенные бойцы — там подсветим точки, с которых берётся захват
   const capTargets=new Set();
@@ -1367,10 +1827,16 @@ function drawMinimap(){
   const m=mmRect(), sx=m.w/WORLD_W, sy=m.h/WORLD_H;
   ctx.fillStyle="rgba(9,12,17,.88)"; ctx.fillRect(m.x-5,m.y-5,m.w+10,m.h+10);
   ctx.strokeStyle="#2c3546"; ctx.lineWidth=1; ctx.strokeRect(m.x-5.5,m.y-5.5,m.w+11,m.h+11);
-  // кварталы — фоном, чтобы читалась форма города
-  ctx.fillStyle="#242b38";
-  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++) if(grid[r][c]===1)
+  // рельеф фоном, чтобы читалась форма города: застройка, вода и зелень
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
+    const g=grid[r][c];
+    const col = opaqueT(g) ? "#242b38"
+              : (g===T.WATER||g===T.POND) ? "#1b3646"
+              : g===T.PARK ? "#22402b" : null;
+    if(!col) continue;
+    ctx.fillStyle=col;
     ctx.fillRect(m.x+c*TILE*sx, m.y+r*TILE*sy, TILE*sx+.5, TILE*sy+.5);
+  }
   // туман — до точек, чтобы юниты и заведения по нему не гасли (blur здесь не нужен: смажет всё)
   const vp=vis.player;
   if(vp){

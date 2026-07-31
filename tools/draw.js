@@ -6,13 +6,22 @@ const { loadGame } = require("./harness");
 const FRAMES = +(process.argv[2] || 1400);
 const g = loadGame();
 
-for (let i = 0; i < FRAMES * 0.85; i++) { g.update(0.05); g.draw(); }
-// повтор с выделенными юнитами: кольца выделения и рамка — отдельные ветки рендера
-g.units.slice(0, 3).forEach(u => g.selected.add(u.id));
-// и с улучшенными заведениями: иконки типов, подпись и рамка выбранной точки
-g.UP_KEYS.forEach((k, i) => { const b = g.businesses[i * 2]; if (b && !b.hq) b.kind = k; });
-g.selBiz = g.businesses.find(b => b.owner === "player" && !b.hq) || null;
-for (let i = 0; i < FRAMES * 0.15; i++) { g.update(0.05); g.draw(); }
+// Несколько сидов: рельеф случаен, и на одной карте канал, парк или мост могут просто
+// не попасть в кадр — тогда их ветки отрисовки останутся непроверенными.
+const SEEDS = [1007, 4007, 8007, 12007];
+const per = Math.max(1, Math.floor(FRAMES / SEEDS.length));
 
-console.log(`draw OK: ${FRAMES} кадров без ошибок, юнитов: ${g.units.length}, ` +
-  `бизнесов у игрока: ${g.businesses.filter(b => b.owner === "player").length}/${g.businesses.length}`);
+SEEDS.forEach((seed, si) => {
+  g.reset(si === SEEDS.length - 1 ? 3 : 2, seed);   // последний прогон — на трёх ИИ
+  for (let i = 0; i < per * 0.85; i++) { g.update(0.05); g.draw(); }
+  // повтор с выделенными юнитами: кольца выделения и рамка — отдельные ветки рендера
+  g.units.slice(0, 3).forEach(u => g.selected.add(u.id));
+  // и с улучшенными заведениями: иконки типов, подпись и рамка выбранной точки
+  g.UP_KEYS.forEach((k, i) => { const b = g.businesses[i * 2]; if (b && !b.hq) b.kind = k; });
+  g.selBiz = g.businesses.find(b => b.owner === "player" && !b.hq) || null;
+  for (let i = 0; i < per * 0.15; i++) { g.update(0.05); g.draw(); }
+});
+
+console.log(`draw OK: ${per * SEEDS.length} кадров на ${SEEDS.length} картах без ошибок, ` +
+  `юнитов: ${g.units.length}, бизнесов у игрока: ` +
+  `${g.businesses.filter(b => b.owner === "player").length}/${g.businesses.length}`);

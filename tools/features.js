@@ -159,20 +159,21 @@ function ok(name, cond, extra) {
 
   const u = g.units.find(x => x.team === "player");
   ok("свой боец видит клетку под собой", g.canSee("player", u.x, u.y));
-  ok("обзор — не вся карта", seen("player") < COLS * ROWS * 0.35,
+  // на карте 40x30 старт видно 2..5% клеток; порог 0.15 — с запасом, но уже с зубами
+  ok("обзор — не вся карта", seen("player") < COLS * ROWS * 0.15,
     `видно ${seen("player")} из ${COLS * ROWS} клеток`);
 
-  // дом в глубине квартала лучом не берётся: видна только та стена, к которой примыкает
-  // просматриваемая дорога. Ищем такой дом среди клеток вокруг бойца.
+  // Дом в глубине квартала лучом не берётся: видна только та стена, к которой примыкает
+  // просматриваемая ходибельная клетка. Условие — ровно правило второго прохода visFrom:
+  // не «непроходим со всех сторон» (вода тоже непроходима, но сквозь неё видно),
+  // а «нет ни одного ходибельного соседа».
   const uc = Math.floor(u.x / T), ur = Math.floor(u.y / T);
   let deep = null;
-  for (let dr = -2; dr <= 2 && !deep; dr++) for (let dc = -2; dc <= 2 && !deep; dc++) {
+  for (let dr = -3; dr <= 3 && !deep; dr++) for (let dc = -3; dc <= 3 && !deep; dc++) {
     const c = uc + dc, r = ur + dr;
     if (c < 1 || r < 1 || c >= COLS - 1 || r >= ROWS - 1) continue;
-    if (g.passable(c, r)) continue;
-    const walled = !g.passable(c - 1, r) && !g.passable(c + 1, r) &&
-                   !g.passable(c, r - 1) && !g.passable(c, r + 1);
-    if (walled) deep = [c, r];
+    if (!g.opaqueT(g.grid[r][c])) continue;
+    if (!g.nextToWalk(c, r)) deep = [c, r];
   }
   ok("дом без выхода на дорогу не виден", !deep || !g.canSee("player", deep[0] * T + T / 2, deep[1] * T + T / 2),
     deep ? `клетка ${deep}` : "такого дома рядом не нашлось");
@@ -208,7 +209,7 @@ function ok(name, cond, extra) {
   g.reset(2);
   const first = share();
   g.reset(2);                                    // новая карта — кэш лучей обязан пересчитаться
-  ok("после новой партии обзор снова узкий", share() < 0.35,
+  ok("после новой партии обзор снова узкий", share() < 0.15,
     `было ${(first * 100).toFixed(1)}%, стало ${(share() * 100).toFixed(1)}%`);
   ok("память о точках пересоздана под новую карту",
     g.businesses.every(b => b.memo && g.factions.every(f => b.memo[f])));
@@ -359,6 +360,108 @@ function ok(name, cond, extra) {
   // потеря точки снимает выбор сама, без отдельного хука в захвате
   mine.owner = "ai1"; g.update(0.001);
   ok("панель: потерянная точка снимает выбор", g.selBiz === null);
+}
+
+// ---------- рельеф и генератор карт ----------
+// Генератор сидирован, поэтому здесь можно проверять конкретные карты, а не только
+// агрегат: набор сидов фиксирован и любая регрессия генератора его валит.
+{
+  const SEEDS = [1007, 2007, 3007, 4007, 5007, 6007, 7007, 8007, 9007, 10007, 11007, 12007];
+  const g = loadGame();
+  const T = g.T, TL = g.TILE;
+  const cells = fn => { const out = []; for (let r = 0; r < g.ROWS; r++) for (let c = 0; c < g.COLS; c++) if (fn(g.grid[r][c], c, r)) out.push([c, r]); return out; };
+  const found = { water: 0, bridge: 0, park: 0, pond: 0, plaza: 0, alley: 0 };
+  const bad = { comp: [], spots: [], hq: [], pondEdge: [], shapes: [], types: [], cover: [] };
+
+  for (const s of SEEDS) {
+    g.reset(2, s);
+    const has = t => cells(v => v === t).length > 0;
+    if (has(T.WATER)) found.water++;
+    if (has(T.BRIDGE)) found.bridge++;
+    if (has(T.PARK)) found.park++;
+    if (has(T.POND)) found.pond++;
+    if (has(T.PLAZA)) found.plaza++;
+    if (cells((v, c, r) => v === T.ROAD && !g.isRoadCol[c] && !g.isRoadRow[r]).length) found.alley++;
+
+    if (![T.WATER, T.BRIDGE, T.PARK, T.PLAZA].every(has)) bad.types.push(s);
+    if (g.landComponents().sizes.length !== 1) bad.comp.push(s);
+    if (!g.businesses.every(b => g.captureSpots(b).length)) bad.spots.push(s);
+    if (new Set(g.buildings.map(b => b.w + "x" + b.h)).size < 3) bad.shapes.push(s);
+
+    // Каждая клетка дома обязана лежать в каком-то пятне: дом рисуется по buildings[],
+    // а непокрытая клетка ушла бы в ветку «дорога» и стала бы асфальтовой дырой,
+    // сквозь которую не пройти и не выстрелить.
+    const cov = new Set();
+    g.buildings.forEach(b => b.cells.forEach(([c, r]) => cov.add(r * g.COLS + c)));
+    if (cells(v => v === T.BLD || v === T.BIZ).some(([c, r]) => !cov.has(r * g.COLS + c))) bad.cover.push(s);
+
+    // штабы взаимно достижимы — иначе партия не может закончиться захватом
+    const hqs = g.factions.map(f => g.factionHQ(f));
+    const from = g.captureSpots(hqs[0])[0];
+    if (!hqs.slice(1).every(h => { const d = g.captureSpots(h)[0]; return !!g.findPath(from.x, from.y, d.x, d.y); })) bad.hq.push(s);
+
+    // пруд обязан лежать в траве: отступ в клетку и есть гарантия, что он ничего не отрезает
+    const leaky = cells(v => v === T.POND).some(([c, r]) =>
+      [[0, -1], [0, 1], [-1, 0], [1, 0]].some(([dc, dr]) => {
+        const n = g.inMap(c + dc, r + dr) ? g.grid[r + dr][c + dc] : T.BLD;
+        return n !== T.PARK && n !== T.POND;
+      }));
+    if (leaky) bad.pondEdge.push(s);
+  }
+
+  const n = SEEDS.length;
+  ok("генератор: канал есть на каждой карте", found.water === n, `${found.water}/${n}`);
+  ok("генератор: мост есть на каждой карте", found.bridge === n, `${found.bridge}/${n}`);
+  ok("генератор: парк есть на каждой карте", found.park === n, `${found.park}/${n}`);
+  ok("генератор: площадь есть на каждой карте", found.plaza === n, `${found.plaza}/${n}`);
+  ok("генератор: пруд встречается", found.pond >= n * 0.5, `${found.pond}/${n}`);
+  ok("генератор: переулки встречаются", found.alley >= n * 0.5, `${found.alley}/${n}`);
+  ok("генератор: все обязательные типы клеток на месте", !bad.types.length, `сиды ${bad.types}`);
+  ok("генератор: земля односвязна — берега сшиты мостами", !bad.comp.length, `сиды ${bad.comp}`);
+  ok("генератор: у каждой точки есть подход", !bad.spots.length, `сиды ${bad.spots}`);
+  ok("генератор: штабы взаимно достижимы", !bad.hq.length, `сиды ${bad.hq}`);
+  ok("генератор: пруд окружён травой", !bad.pondEdge.length, `сиды ${bad.pondEdge}`);
+  ok("генератор: дома разной формы", !bad.shapes.length, `сиды ${bad.shapes}`);
+  ok("генератор: каждая клетка дома лежит в пятне застройки", !bad.cover.length, `сиды ${bad.cover}`);
+
+  // Вода: не пройти, но выстрелить и увидеть — можно. Это и есть смысл расщепления
+  // passable/blocksSight; сведёте их обратно в один предикат — упадёт ровно здесь.
+  g.reset(2, SEEDS[0]);
+  const wet = cells(v => v === T.WATER);
+  ok("через воду не ходят", wet.every(([c, r]) => !g.passable(c, r)), `${wet.length} клеток воды`);
+  ok("вода луч не держит", wet.every(([c, r]) => !g.blocksSight(c, r)));
+  // берега напротив друг друга: стрелять через канал можно
+  let across = null;
+  for (const [c, r] of wet) {
+    if (g.passable(c - 1, r) && g.passable(c + 1, r)) { across = [[c - 1, r], [c + 1, r]]; break; }
+    if (g.passable(c, r - 1) && g.passable(c, r + 1)) { across = [[c, r - 1], [c, r + 1]]; break; }
+  }
+  ok("нашлись берега напротив друг друга", !!across);
+  if (across) {
+    const [[ac, ar], [bc, br]] = across;
+    ok("через канал стреляют", g.hasLOS(ac * TL + TL / 2, ar * TL + TL / 2, bc * TL + TL / 2, br * TL + TL / 2),
+      `${ac},${ar} -> ${bc},${br}`);
+  }
+
+  const parkCells = cells(v => v === T.PARK);
+  ok("парк проходим", parkCells.every(([c, r]) => g.passable(c, r)), `${parkCells.length} клеток`);
+  ok("парк луч не держит", parkCells.every(([c, r]) => !g.blocksSight(c, r)));
+  ok("пруд непроходим, но луч не держит",
+    cells(v => v === T.POND).every(([c, r]) => !g.passable(c, r) && !g.blocksSight(c, r)));
+  const brCells = cells(v => v === T.BRIDGE);
+  ok("мост проходим", brCells.every(([c, r]) => g.passable(c, r)), `${brCells.length} клеток моста`);
+  ok("мостов мало — это чокпоинты", brCells.length <= 12, `${brCells.length} клеток моста`);
+  ok("дом и заведение держат луч",
+    cells(v => v === T.BLD || v === T.BIZ).every(([c, r]) => g.blocksSight(c, r) && !g.passable(c, r)));
+
+  // Детерминизм: без него сид бесполезен и весь блок выше ничего не проверяет.
+  const snap = () => g.grid.map(row => row.join("")).join("|");
+  g.reset(2, 4242); const a = snap();
+  g.reset(2, 4242); const b = snap();
+  g.reset(2, 777);  const c = snap();
+  ok("один сид — одна и та же карта", a === b);
+  ok("разные сиды — разные карты", a !== c);
+  ok("сид карты записан", g.mapSeed > 0, `mapSeed=${g.mapSeed}`);
 }
 
 console.log(fails ? `\nПРОВАЛЕНО проверок: ${fails}` : "\nвсе проверки пройдены");
