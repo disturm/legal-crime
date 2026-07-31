@@ -10,7 +10,33 @@
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
     font-family:"Segoe UI",system-ui,Arial,sans-serif;overflow:hidden;user-select:none}
-  #wrap{display:flex;height:100vh;overflow:hidden}
+  /* колонка: строка казны сверху, под ней карта с правым меню.
+     Полоса — часть раскладки, а не накладка на канвас: карту она не закрывает,
+     а высоту канваса пересчитывает тот же ResizeObserver по #stage */
+  body{display:flex;flex-direction:column}
+  #wrap{display:flex;flex:1 1 auto;min-height:0;overflow:hidden}
+  /* Строка казны: деньги, доход, расход, итог и доли рынка видны ВСЕГДА —
+     это то, по чему принимается каждое решение, и прокруткой правого меню
+     оно уезжать не должно. Источник правды один — updateUI. */
+  #top{flex:0 0 auto;display:flex;align-items:stretch;height:54px;
+    background:var(--panel);border-bottom:1px solid var(--line);overflow:hidden}
+  .tstat{display:flex;flex-direction:column;justify-content:center;gap:3px;
+    flex:0 0 auto;padding:0 15px;border-right:1px solid var(--line)}
+  .tstat .k{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+  .tstat .v{font-size:17px;font-weight:700;line-height:1;white-space:nowrap}
+  .tstat.money{padding-left:18px}
+  .tstat.money .v{color:var(--gold);font-size:21px}
+  /* доли рынка — та же статистика, что была в правом меню; ужимается первой */
+  #topMarket{display:flex;align-items:center;gap:0;flex:1 1 auto;min-width:0;overflow:hidden}
+  #topMarket .cap{display:flex;align-items:center;padding:0 14px;font-size:10px;color:var(--dim);
+    text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;flex:0 0 auto}
+  #market{display:flex;align-items:center;min-width:0;overflow:hidden}
+  .mkt{display:flex;flex-direction:column;justify-content:center;gap:3px;
+    padding:0 14px;min-width:0}
+  .mkt .k{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mkt .v{font-size:15px;font-weight:700;line-height:1;white-space:nowrap}
+  .mkt .v small{font-size:10px;font-weight:400;color:var(--dim);margin-left:4px}
   /* канвас позиционируется абсолютно внутри #stage: его атрибуты width/height
      больше не влияют на раскладку, иначе ResizeObserver уходит в самоусиление */
   #stage{flex:1 1 auto;min-width:0;position:relative;overflow:hidden}
@@ -19,10 +45,6 @@
     display:flex;flex-direction:column;padding:14px;gap:12px;overflow-y:auto}
   h1{font-size:18px;margin:0;letter-spacing:.5px;color:var(--gold)}
   h1 span{color:var(--dim);font-size:11px;display:block;font-weight:400;letter-spacing:0}
-  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
-  .stat .k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
-  .stat .v{font-size:22px;font-weight:700}
-  .money .v{color:var(--gold)}
   .grp-title{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin:2px 0 -4px}
   button.buy{display:flex;justify-content:space-between;align-items:center;gap:8px;
     background:var(--panel2);border:1px solid var(--line);color:var(--txt);
@@ -80,7 +102,8 @@
   #btnRally,#btnDemolish{flex-direction:row;justify-content:space-between;align-items:center;
     width:100%;margin-top:6px}
   #bizPanel .note{font-size:10px;color:var(--dim);line-height:1.4;margin-top:7px}
-  #msg{position:fixed;left:50%;top:18px;transform:translateX(-50%);
+  /* тост уходит под строку казны: перекрывать деньги ему нечем */
+  #msg{position:fixed;left:50%;top:70px;transform:translateX(-50%);
     background:rgba(20,24,32,.92);border:1px solid var(--line);border-radius:8px;
     padding:8px 16px;font-size:14px;pointer-events:none;opacity:0;transition:opacity .3s}
   #over{position:fixed;inset:0;display:none;place-items:center;background:rgba(6,8,12,.85);z-index:9}
@@ -101,6 +124,22 @@
   .ovCap{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:-2px}
   .ovRow{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
 </style>
+
+<!-- Строка казны — всегда на виду: деньги, доход, расход, итог, точки, бойцы и доли
+     рынка. Раньше это лежало в правом меню и уезжало прокруткой вместе с покупками. -->
+<div id="top">
+  <div class="tstat money"><div class="k">Счёт</div><div class="v" id="uiMoney">$0</div></div>
+  <div class="tstat"><div class="k">Доход/сек</div><div class="v" id="uiInc" style="color:var(--green)">$0</div></div>
+  <!-- расход — не только бойцы: тренировочный центр ест столько же, сколько отряд -->
+  <div class="tstat"><div class="k">Расход/сек</div><div class="v" id="uiUp" style="color:var(--red)">$0</div></div>
+  <div class="tstat"><div class="k">Итог/сек</div><div class="v" id="uiNet">$0</div></div>
+  <div class="tstat"><div class="k">Точки</div><div class="v" id="uiBiz">0/0</div></div>
+  <div class="tstat"><div class="k">Бойцы</div><div class="v" id="uiArmy">0</div></div>
+  <div id="topMarket">
+    <div class="cap">Твой рынок</div>
+    <div id="market"></div>
+  </div>
+</div>
 
 <div id="wrap">
   <div id="stage"><canvas id="game"></canvas>
@@ -151,13 +190,8 @@
   </div>
   <div id="side">
     <h1>LEGAL CRIME<span>захвати город</span></h1>
-    <div class="stat money"><div class="k">Счёт</div><div class="v" id="uiMoney">$0</div></div>
-    <div style="display:flex;gap:8px">
-      <div class="stat" style="flex:1"><div class="k">Доход/сек</div><div class="v" id="uiInc" style="color:var(--green)">$0</div></div>
-      <div class="stat" style="flex:1"><div class="k">Бизнесы</div><div class="v" id="uiBiz">0/0</div></div>
-    </div>
-    <!-- содержание — не только бойцы: тренировочный центр ест столько же, сколько отряд -->
-    <div class="stat" style="padding:8px 12px"><div class="k">Содержание · бойцы</div><div class="v" id="uiUp" style="font-size:16px">$0 · 0</div></div>
+    <!-- деньги, доход, расход и доли рынка живут в строке сверху: они нужны всегда,
+         а правое меню прокручивается покупками -->
 
     <div class="legend" id="legend"></div>
     <div id="standings" style="font-size:11px;color:var(--dim);line-height:1.6"></div>
@@ -194,9 +228,6 @@
       но достаётся захватчику вместе с заведением; снесённая не достаётся никому —
       и берётся снова быстро.
     </div>
-
-    <div class="grp-title">Твой рынок</div>
-    <div id="market" style="font-size:11px;color:var(--dim);line-height:1.6"></div>
 
     <div class="grp-title">Звук — <kbd>M</kbd> гасит всё разом</div>
     <label class="opt"><input type="checkbox" id="optMusic" checked> Джаз</label>
@@ -1237,9 +1268,6 @@ function refreshUpgradeUI(){
   document.getElementById("costRally").textContent =
     !b ? "—" : here ? (b.hq?"в штабе":"здесь") : canRally("player",b) ? "сюда" : "нужен зал";
   document.getElementById("btnRally").disabled = !(b && (canRally("player",b) || (here&&!b.hq)));
-  // Рынок: только СВОЯ доля и размер рынка. Чужие доли — это разведка, а не витрина.
-  document.getElementById("market").innerHTML = MARKET_KEYS.map(k=>
-    `<div>${UPGRADES[k].name}: <b style="color:var(--txt)">${marketPct("player",k)}%</b> · рынок ${marketSize(k)}</div>`).join("");
 }
 
 // ---------- ИИ фракций (каждая воюет за себя) ----------
@@ -2641,13 +2669,22 @@ function drawUnit(u){
 // ---------- UI ----------
 function teamLabel(f){ return f==="player"?"Ты":TEAM[f].name; }
 function updateUI(){
+  // Строка казны сверху: доход и расход показаны ПОРОЗНЬ, итог — отдельной цифрой.
+  // Раньше в «доходе» стояла разница, и по панели нельзя было понять, что именно
+  // изменилось — прибавился ли расход или отняли точку.
   document.getElementById("uiMoney").textContent="$"+Math.floor(funds.player);
   const net=fInc.player-fUp.player;
-  const inc=document.getElementById("uiInc");
-  inc.textContent=(net>=0?"+$":"−$")+Math.abs(net);
-  inc.style.color = net>=0?"var(--green)":"var(--red)";
-  document.getElementById("uiUp").textContent="$"+fUp.player+" · "+units.filter(u=>u.team==="player").length;
+  document.getElementById("uiInc").textContent="+$"+fInc.player;
+  document.getElementById("uiUp").textContent="−$"+fUp.player;
+  const el=document.getElementById("uiNet");
+  el.textContent=(net>=0?"+$":"−$")+Math.abs(net);
+  el.style.color = net>=0?"var(--green)":"var(--red)";
+  document.getElementById("uiArmy").textContent=""+units.filter(u=>u.team==="player").length;
   document.getElementById("uiBiz").textContent=businesses.filter(b=>b.owner==="player").length+"/"+businesses.length;
+  // Рынок: только СВОЯ доля и размер рынка. Чужие доли — это разведка, а не витрина.
+  document.getElementById("market").innerHTML = MARKET_KEYS.map(k=>
+    `<div class="mkt"><div class="k">${UPGRADES[k].name}</div>`+
+    `<div class="v">${marketPct("player",k)}%<small>${marketCount("player",k)} из ${marketSize(k)}</small></div></div>`).join("");
   // легенда и табло по активным фракциям
   document.getElementById("legend").innerHTML =
     factions.map(f=>`<span><i style="background:${TEAM[f].main}"></i>${teamLabel(f)}${alive(f)?"":" ✝"}</span>`).join("")
