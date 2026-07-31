@@ -1763,15 +1763,25 @@ function visFrom(c,r,R){
   // видно с улицы». Те же четыре грани, что и у captureSpots: подойти и разглядеть —
   // одно и то же. Именно поэтому проверка на walkableT, а не просто «клетка видна»:
   // иначе витрину читали бы с другого берега канала, куда не подойти.
-  const out=[...lit];
+  const out=new Set(lit);
   const seenWalk=(nc,nr)=>inMap(nc,nr)&&lit.has(nr*COLS+nc)&&walkableT(grid[nr][nc]);
   for(let dr=-rad;dr<=rad;dr++)for(let dc=-rad;dc<=rad;dc++){
     const nc=c+dc, nr=r+dr;
     if(!inMap(nc,nr)||!opaqueT(grid[nr][nc])) continue;
     const x=nc*TILE+TILE/2, y=nr*TILE+TILE/2;
     if(Math.hypot(x-x0,y-y0)>R+TILE*0.5) continue;
-    if(seenWalk(nc,nr-1)||seenWalk(nc,nr+1)||seenWalk(nc-1,nr)||seenWalk(nc+1,nr)) out.push(nr*COLS+nc);
+    if(seenWalk(nc,nr-1)||seenWalk(nc,nr+1)||seenWalk(nc-1,nr)||seenWalk(nc+1,nr)) out.add(nr*COLS+nc);
   }
+  // Проход 3 — вытянутая рука: все восемь соседних клеток видны БЕЗУСЛОВНО.
+  // Ни один из двух проходов их не гарантирует, и обе дыры — диагональные.
+  // Луч идёт из центра в центр, и на диагонали ровно посередине попадает в стык
+  // четырёх клеток; floor() относит эту точку к одной из двух смежных — если там
+  // стена, диагональ гаснет, причём только с одной стороны (обзор становится
+  // ещё и несимметричным: вправо-вниз видно, влево-вниз нет). Угловой дом не берёт
+  // и второй проход: гранью к клетке бойца он не примыкает вовсе. На карте это
+  // читалось как чёрная клетка под носом у бойца — на пятой части всех клеток.
+  for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++)
+    if(inMap(c+dc,r+dr)) out.add((r+dr)*COLS+(c+dc));
   list=Int32Array.from(out); losCache.set(key,list);
   return list;
 }
@@ -1781,6 +1791,15 @@ function markVision(f,x,y,R){
   if(!passable(c,r)){ const p=nearestPassable(c,r); if(!p) return; c=p[0]; r=p[1]; }
   const list=visFrom(c,r,R);
   for(let i=0;i<list.length;i++) v[list[i]]=1;
+}
+// Клетка и её восемь соседей — безусловно, тот же третий проход visFrom, но от клетки,
+// на которую не надо вставать. Нужен заведению: оно само стоит в НЕПРОХОДИМОЙ клетке,
+// и то, что примыкает к нему стенка к стенке, лучом со ступеней не берётся — заслоняет
+// его же плитка, а обойти её лучу нечем.
+function markNear(f,c,r){
+  const v=vis[f]; if(!v) return;
+  for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++)
+    if(inMap(c+dc,r+dr)) v[(r+dr)*COLS+(c+dc)]=1;
 }
 let fogTimer=0;
 function updateVision(dt){
@@ -1806,6 +1825,7 @@ function updateVision(dt){
     const R=b.hq?SIGHT_HQ:SIGHT_BIZ, spots=captureSpots(b);
     if(spots.length) for(const s of spots) markVision(b.owner,s.x,s.y,R);
     else markVision(b.owner,b.x,b.y,R);   // подхода нет (карта-заглушка) — светим как раньше
+    markNear(b.owner,b.c,b.r);            // и вплотную к самой плитке — со ступеней туда не видно
   }
   // что фракция видит сейчас — то и запоминает; вне обзора остаётся вчерашняя картина
   for(const b of businesses){

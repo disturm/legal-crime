@@ -362,12 +362,43 @@ function ok(name, cond, extra) {
   let deep = null;
   for (let dr = -3; dr <= 3 && !deep; dr++) for (let dc = -3; dc <= 3 && !deep; dc++) {
     const c = uc + dc, r = ur + dr;
+    if (Math.abs(dc) <= 1 && Math.abs(dr) <= 1) continue;   // вплотную видно всё, см. проверку ниже
     if (c < 1 || r < 1 || c >= COLS - 1 || r >= ROWS - 1) continue;
     if (!g.opaqueT(g.grid[r][c])) continue;
     if (!g.nextToWalk(c, r)) deep = [c, r];
   }
   ok("дом без выхода на дорогу не виден", !deep || !g.canSee("player", deep[0] * T + T / 2, deep[1] * T + T / 2),
     deep ? `клетка ${deep}` : "такого дома рядом не нашлось");
+
+  // Вытянутая рука: восемь соседних клеток видны из ЛЮБОЙ ходибельной. Лучом это не
+  // выходит — на диагонали он проходит ровно по стыку четырёх клеток, и угол дома его
+  // гасит, причём только с одной стороны (обзор был ещё и несимметричным); угловой дом
+  // не берёт и второй проход, он не примыкает к бойцу гранью. Без третьего прохода
+  // visFrom дыра была на пятой части клеток карты — чёрный тайл под носом у бойца.
+  {
+    let holes = 0, cells = 0, sample = "";
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      if (!g.passable(c, r)) continue;
+      cells++;
+      const set = new Set(g.visFrom(c, r, g.TYPES.shooter.sight));
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const nc = c + dc, nr = r + dr;
+        if (!g.inMap(nc, nr) || set.has(nr * COLS + nc)) continue;
+        holes++; sample = sample || `из [${c},${r}] не видно [${nc},${nr}] (тип ${g.grid[nr][nc]})`;
+      }
+    }
+    ok("вплотную к бойцу тумана нет: видны все 8 соседних клеток", holes === 0,
+      holes ? `${holes} дыр, напр. ${sample}` : `проверено ${cells} клеток`);
+  }
+  // то же самое через живой обзор фракции, а не только через visFrom
+  {
+    let holes = 0;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const c = uc + dc, r = ur + dr;
+      if (g.inMap(c, r) && !g.canSee("player", c * T + T / 2, r * T + T / 2)) holes++;
+    }
+    ok("соседние клетки видны и в живом тумане", holes === 0, `не видно ${holes} из 8`);
+  }
 
   // Своя точка — это свои люди на месте: обзор не хуже живого стрелка и во все стороны,
   // то есть со всех подходов, а не с одного случайного соседа непроходимой клетки.
@@ -497,6 +528,40 @@ function ok(name, cond, extra) {
     const withMan = seen() - base;
     ok("точка видит не меньше стрелка на её пороге", withBiz >= withMan,
       `точка открыла ${withBiz} клеток, стрелок ${withMan}`);
+  }
+}
+
+// ---------- своя точка видит вплотную к себе: все 8 клеток вокруг плитки ----------
+// То же правило вытянутой руки, что и у бойца, но лучом оно тут не выходит вовсе:
+// заведение стоит в непроходимой клетке, и то, что примыкает к нему стенка к стенке,
+// с его же ступеней заслонено им самим — обойти плитку лучу нечем. До markNear дыра
+// была у трёх четвертей точек карты, и не только в стенах: под носом у точки
+// оставались тёмными и площадь, и набережная, то есть клетки, где стоят живые.
+{
+  const g = loadGame();
+  for (const size of ["small", "normal"]) {
+    g.reset(2, 1007, size);
+    g.businesses.forEach(b => b.owner = "player");     // проверяем каждую точку карты разом
+    g.updateVision(1);
+    let holes = 0, sample = "";
+    for (const b of g.businesses)
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const c = b.c + dc, r = b.r + dr;
+        if (!g.inMap(c, r) || g.vis.player[r * g.COLS + c]) continue;
+        holes++; sample = sample || `у точки [${b.c},${b.r}] не видно [${c},${r}] (тип ${g.grid[r][c]})`;
+      }
+    ok(`своя точка видит все 8 клеток вплотную (${size})`, holes === 0,
+      holes ? `${holes} дыр, напр. ${sample}` : `точек ${g.businesses.length}`);
+  }
+  // Чужая точка так не светит: правило про своих людей на месте, а не про здание.
+  g.reset(2, 1007, "small");
+  const en = g.businesses.find(b => !b.hq && g.units.every(u => Math.hypot(u.x - b.x, u.y - b.y) > 600));
+  if (!en) { ok("нашлась дальняя точка для проверки чужого обзора", false); }
+  else {
+    en.owner = "ai1";
+    g.updateVision(1);
+    ok("чужая точка соседей игроку не открывает", !g.canSee("player", en.x, en.y),
+      `точка [${en.c},${en.r}]`);
   }
 }
 
