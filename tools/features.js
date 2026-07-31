@@ -21,6 +21,10 @@ function ok(name, cond, extra) {
       `всего ${mine.length}, вышибал ${by("bouncer")}, стрелков ${by("shooter")}`);
     const hq = g.factionHQ(f);
     ok(`${f}: штаб даёт $10/с`, hq && hq.income === 10, hq && `income=${hq.income}`);
+    // на старте у фракции нет ничего, кроме штаба: все прочие точки надо брать самому
+    const own = g.businesses.filter(b => b.owner === f);
+    ok(`${f}: владеет только штабом`, own.length === 1 && own[0] === hq,
+      `точек ${own.length}: ` + own.map(b => b.name + (b.hq ? " (штаб)" : "")).join(", "));
   });
 }
 
@@ -275,6 +279,18 @@ function ok(name, cond, extra) {
   ok("чужие бойцы на старте не видны", far.every(p => !g.canSee("player", p.x, p.y)),
     `видно ${far.filter(p => g.canSee("player", p.x, p.y)).length} из ${far.length}`);
 
+  // На старте у фракции только штаб, поэтому чужую не-штабную точку заводим руками:
+  // ИИ забрал ближайшую к себе, а игрок этого не видел — ровно тот случай, что проверяем.
+  const aiHQ = g.factionHQ("ai1");
+  let grabbed = null, gd = 1e9;
+  g.businesses.forEach(b => {
+    if (b.owner !== "neutral" || b.hq) return;
+    const d = Math.hypot(b.x - aiHQ.x, b.y - aiHQ.y);
+    if (d < gd) { gd = d; grabbed = b; }
+  });
+  if (grabbed) grabbed.owner = "ai1";
+  g.updateVision(1);                               // память обновляется только по видимому
+
   // чужие точки считаются нейтральными, пока их не разведали; штабы — исключение
   const enemyBiz = g.businesses.filter(b => b.owner !== "player" && b.owner !== "neutral" && !b.hq);
   ok("неразведанная чужая точка считается нейтральной",
@@ -386,7 +402,9 @@ function ok(name, cond, extra) {
   const g = loadGame();
   g.reset(1);
   const hq = g.playerHQ();
-  const mine = g.businesses.find(b => b.owner === "player" && !b.hq);
+  // улучшать нечего, пока не захватишь: на старте у игрока один штаб
+  const mine = g.businesses.find(b => b.owner === "neutral" && !b.hq);
+  if (mine) mine.owner = "player";
   const foreign = g.businesses.find(b => b.owner !== "player");
   g.money = 5000;
   ok("штаб не улучшается", !g.canUpgrade("player", hq) && !g.buyUpgrade("player", hq, "bar") && hq.kind === null);
@@ -397,7 +415,8 @@ function ok(name, cond, extra) {
     `kind=${mine.kind}, деньги ${Math.round(g.money)}`);
   const after = g.money;
   ok("улучшение необратимо", !g.buyUpgrade("player", mine, "bar") && mine.kind === "casino" && g.money === after);
-  const two = g.businesses.find(b => b.owner === "player" && !b.hq && !b.kind);
+  const two = g.businesses.find(b => b.owner === "neutral" && !b.hq && !b.kind);
+  if (two) two.owner = "player";
   g.money = 50;
   ok("без денег улучшения нет", !two || (!g.buyUpgrade("player", two, "strip") && two.kind === null));
 }
@@ -407,8 +426,11 @@ function ok(name, cond, extra) {
   const g = loadGame();
   g.reset(1);
   const hq = g.playerHQ();
-  const mine = g.businesses.find(b => b.owner === "player" && !b.hq);
-  const foreign = g.businesses.find(b => b.owner !== "player" && !b.hq);
+  // на старте у игрока один штаб, поэтому точку под снос сперва забираем
+  const mine = g.businesses.find(b => b.owner === "neutral" && !b.hq);
+  mine.owner = "player";
+  const foreign = g.businesses.find(b => b.owner === "neutral" && !b.hq && b !== mine);
+  foreign.owner = "ai1";                     // именно чужое, а не ничьё
   g.money = 5000;
   ok("простую точку сносить нечего", !g.canDemolish("player", mine) && !g.demolish("player", mine));
   g.buyUpgrade("player", mine, "casino");
@@ -556,7 +578,8 @@ function ok(name, cond, extra) {
   g.selBiz = g.playerHQ(); g.update(0.001);
   ok("панель: штаб улучшать не даёт",
     g.els.buyUpBar.disabled === true && /Штаб/.test(g.els.upSel.textContent), g.els.upSel.textContent);
-  const mine = g.businesses.find(b => b.owner === "player" && !b.hq);
+  const mine = g.businesses.find(b => b.owner === "neutral" && !b.hq);   // захваченная по ходу партии
+  mine.owner = "player";
   g.selBiz = mine; g.update(0.001);
   ok("панель: своя точка включает кнопки", g.els.buyUpBar.disabled === false);
   ok("панель: рынок показывает свою долю и размер",

@@ -608,10 +608,7 @@ function placeBiz(){
   factions.forEach((team,k)=>{
     const b=businesses[hqIdx[k]]; if(!b) return;
     b.owner=team; b.hq=team; b.income=10;                 // штаб приносит стабильные $10/с
-    // стартовый бизнес рядом со штабом
-    let st=null,sd=1e9;
-    businesses.forEach(o=>{ if(o.owner!=="neutral")return; const d=Math.hypot(o.x-b.x,o.y-b.y); if(d<sd){sd=d;st=o;} });
-    if(st) st.owner=team;
+    // больше у фракции на старте нет ничего: все прочие точки нейтральны
   });
 }
 
