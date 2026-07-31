@@ -310,6 +310,60 @@ function ok(name, cond, extra) {
   }
 }
 
+// ---------- тип заведения фогнут наравне с владельцем ----------
+// Во что точку превратили — видно только с улицы. Пока она в тумане, на плитке
+// держится последний РАЗВЕДАННЫЙ тип, а не сегодняшний.
+{
+  const g = loadGame();
+  g.reset(2, 1007);
+  const hq = g.playerHQ();
+  const far = g.businesses.filter(b => !b.hq
+    && Math.hypot(b.x - hq.x, b.y - hq.y) > 700
+    && g.units.every(u => Math.hypot(u.x - b.x, u.y - b.y) > 700)
+    && g.captureSpots(b).length > 0);
+  const b = far[0];
+  if (!b) { ok("нашлась дальняя точка для проверки тумана типа", false); }
+  else {
+    b.owner = "ai1"; b.kind = "bar";
+    g.updateVision(1);
+    ok("неразведанное заведение типа не выдаёт", g.knownKind("player", b) === null,
+      `видно ${g.knownKind("player", b)}`);
+    ok("на плитке неразведанной точки базовый доход",
+      g.bizTag(b, g.knownKind("player", b)) === "$" + b.income,
+      `на плитке ${g.bizTag(b, g.knownKind("player", b))}`);
+
+    // подвели бойца вплотную — тип проявился вместе с владельцем
+    const s = g.captureSpots(b)[0];
+    g.spawnUnit("bouncer", s.x, s.y, "player");
+    const scout = g.units[g.units.length - 1];
+    g.updateVision(1);
+    ok("разведанная точка показывает настоящий тип", g.knownKind("player", b) === "bar");
+    ok("на плитке разведанного бара его цена",
+      g.bizTag(b, g.knownKind("player", b)) === "$" + g.UPGRADES.bar.X);
+
+    // боец ушёл, а хозяин тем временем перестроил точку — игрок помнит бар
+    scout.hp = 0;
+    b.kind = "casino";
+    g.updateVision(1);
+    ok("за туманом держится последний разведанный тип", g.knownKind("player", b) === "bar",
+      `помнит ${g.knownKind("player", b)}, факт ${b.kind}`);
+    ok("экономика считает по факту, а не по памяти игрока",
+      g.bizBaseIncome(b) === g.UPGRADES.casino.X);
+
+    // снос за туманом тоже незаметен
+    b.kind = null;
+    g.updateVision(1);
+    ok("снос за туманом не виден", g.knownKind("player", b) === "bar");
+
+    // без тумана память равна факту сразу у всех
+    g.reset(2, 1007, undefined, false);
+    const nb = g.businesses.find(x => !x.hq);
+    nb.owner = "ai1"; nb.kind = "casino";
+    g.updateVision(1);
+    ok("без тумана тип чужой точки известен", g.knownKind("player", nb) === "casino");
+  }
+}
+
 // ---------- своя точка светит во все стороны, а не в одну сторону ----------
 // Заведение стоит в непроходимой клетке: обзор из его центра ушёл бы в ОДИН соседний
 // проходимый тайл (nearestPassable), и дальняя грань дома осталась бы в тумане.

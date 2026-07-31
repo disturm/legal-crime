@@ -781,10 +781,16 @@ function bizIncome(b){ return bizIncomeOf(b.owner,b); }
 // Любая цифра, зависящая от живой доли, течёт сквозь туман: она меняется, когда
 // точку у тебя уводят или когда соперник строит своё заведение где-то на другом
 // конце карты. Надбавку за долю видно только в панели, у выбранной своей точки.
-function bizBaseIncome(b){ return b.kind ? UPGRADES[b.kind].X : b.income; }
+// Второй аргумент — тип ГЛАЗАМИ фракции (из памяти тумана): плитка рисуется по нему,
+// экономика — по настоящему b.kind, то есть по умолчанию.
+function bizBaseIncome(b,kind){ if(kind===undefined) kind=b.kind; return kind ? UPGRADES[kind].X : b.income; }
 // Что написано на плитке. У тренировочного центра дохода нет — на плитке его расход,
 // и он такая же статичная цифра «как в прайсе»: сквозь туман ничего не выдаёт.
-function bizTag(b){ return bizUpkeep(b) ? "−$"+bizUpkeep(b) : "$"+bizBaseIncome(b); }
+function bizTag(b,kind){
+  if(kind===undefined) kind=b.kind;
+  const up=bizUpkeep(b,kind);
+  return up ? "−$"+up : "$"+bizBaseIncome(b,kind);
+}
 // Прогноз дохода типа kind, если фракция f построит ещё add штук: им пользуются
 // и ИИ при выборе типа, и бот в симе.
 function upIncomeAt(f,kind,add){
@@ -816,7 +822,9 @@ function demolish(f,b){
   return true;   // сбор сам вернётся в штаб: rallyPoint проверяет зал по факту, а не по хуку
 }
 // Содержание заведения: тренировочный центр — единственный, кто ест деньги, а не даёт.
-function bizUpkeep(b){ return (b.kind && UPGRADES[b.kind].upkeep) || 0; }
+// Второй аргумент — тип глазами фракции, как у bizBaseIncome: касса платит по факту,
+// плитка рисует по памяти.
+function bizUpkeep(b,kind){ if(kind===undefined) kind=b.kind; return (kind && UPGRADES[kind].upkeep) || 0; }
 
 // ---------- Точка сбора: где появляется нанятый боец ----------
 // По умолчанию — штаб. Тренировочный центр перехватывает сбор на себя, и это
@@ -1597,7 +1605,7 @@ function updateVision(dt){
   if(!fogOn){
     for(const f of factions) if(vis[f]) vis[f].fill(1);
     for(const b of businesses)
-      for(const f of factions) b.memo[f]={owner:b.owner,capture:b.capture,capBy:b.capBy};
+      for(const f of factions) b.memo[f]=bizSnapshot(b);
     return;
   }
   for(const f of factions) if(vis[f]) vis[f].fill(0);
@@ -1615,9 +1623,13 @@ function updateVision(dt){
   // что фракция видит сейчас — то и запоминает; вне обзора остаётся вчерашняя картина
   for(const b of businesses){
     const k=b.r*COLS+b.c;
-    for(const f of factions) if(vis[f]&&vis[f][k]) b.memo[f]={owner:b.owner,capture:b.capture,capBy:b.capBy};
+    for(const f of factions) if(vis[f]&&vis[f][k]) b.memo[f]=bizSnapshot(b);
   }
 }
+// Снапшот заведения для памяти фракции — ОДНО место, где перечислены фогнутые поля.
+// Кроме владельца и захвата сюда входит тип заведения: во что точку превратили,
+// видно только с улицы. Планировка города и сама точка публичны, живое — нет.
+function bizSnapshot(b){ return {owner:b.owner,capture:b.capture,capBy:b.capBy,kind:b.kind}; }
 function canSee(f,x,y){
   if(!fogOn) return true;          // единственная развилка «без тумана»: остальное идёт через неё
   const c=Math.floor(x/TILE), r=Math.floor(y/TILE);
@@ -1627,6 +1639,8 @@ function canSee(f,x,y){
 // состояние заведения глазами фракции: видит — правда, не видит — последнее известное
 function bizView(f,b){ return canSee(f,b.x,b.y) ? b : (b.memo&&b.memo[f]) || b; }
 function knownOwner(f,b){ return bizView(f,b).owner; }
+// Тип заведения глазами фракции: пока точка в тумане, помнится тот, что видели в последний раз.
+function knownKind(f,b){ return bizView(f,b).kind || null; }
 // Сброс тумана под новую карту и новый список сторон. Только «на месте»: и vis, и losCache
 // пробрасываются в тесты по ссылке.
 function resetFog(){
@@ -1640,8 +1654,8 @@ function resetFog(){
   businesses.forEach(b=>{
     b.memo={};
     factions.forEach(f=>b.memo[f]= (b.owner===f||b.hq)
-      ? {owner:b.owner,capture:0,capBy:null}
-      : {owner:"neutral",capture:0,capBy:null});
+      ? {owner:b.owner,capture:0,capBy:null,kind:b.kind}
+      : {owner:"neutral",capture:0,capBy:null,kind:null});
   });
 }
 
@@ -2369,8 +2383,8 @@ function draw(){
       captureSpots(b).forEach(s=>ctx.strokeRect(s.x-CAP_LAT,s.y-CAP_LAT,CAP_LAT*2,CAP_LAT*2));
       ctx.setLineDash([]);
     }
-    // владелец и захват — глазами игрока: вне обзора рисуем последнее известное
-    const st=bizView("player",b);
+    // владелец, захват и тип заведения — глазами игрока: вне обзора рисуем последнее известное
+    const st=bizView("player",b), kindSeen=st.kind||null;
     const col = st.owner==="neutral"?"#c9a24a":TEAM[st.owner].main;
     ctx.fillStyle="#3a4657"; ctx.fillRect(x+3,y+3,TILE-6,TILE-6);
     ctx.strokeStyle=col; ctx.lineWidth=b.hq?5:3; ctx.strokeRect(x+4,y+4,TILE-8,TILE-8);
@@ -2379,9 +2393,10 @@ function draw(){
     }
     // маркер-крыша
     ctx.fillStyle=col; ctx.globalAlpha=.9; ctx.fillRect(x+4,y+4,TILE-8,10); ctx.globalAlpha=1;
-    // $ — доход без доли рынка: цифра статична и потому ничего не выдаёт сквозь туман
+    // $ — доход без доли рынка, и по ПОМНИМОМУ типу: цифра статична и потому
+    // ничего не выдаёт сквозь туман — ни живой доли, ни свежей стройки за углом
     ctx.fillStyle="#0b0d12"; ctx.font="bold 12px Segoe UI"; ctx.textAlign="center";
-    ctx.fillText(bizTag(b), x+TILE/2, y+13);
+    ctx.fillText(bizTag(b,kindSeen), x+TILE/2, y+13);
     // Точка сбора игрока — флажок в углу плитки. Своя точка и своя же механика,
     // фог тут ни при чём: рисуем по факту, а не по памяти.
     if(rallyPoint("player")===b) drawFlag(x+TILE-17, y+20);
@@ -2391,11 +2406,11 @@ function draw(){
       ctx.strokeStyle="#0b0d12"; ctx.lineWidth=1; ctx.stroke();
       ctx.fillStyle=col; ctx.font="bold 9px Segoe UI"; ctx.fillText("ШТАБ", x+TILE/2, y+TILE-8);
     }else{
-      // тип заведения виден сквозь туман: он публичен, как и планировка города.
-      // Читается ТОЛЬКО из настоящего объекта — в снапшоте памяти (st) поля kind нет.
-      if(b.kind) drawKind(b.kind, x+TILE/2, y+TILE/2-2, 18);
+      // тип заведения фогнут наравне с владельцем: за туманом рисуется тот, что
+      // видели в последний раз (kindSeen из снапшота памяти), а не сегодняшний
+      if(kindSeen) drawKind(kindSeen, x+TILE/2, y+TILE/2-2, 18);
       ctx.fillStyle="#dfe4ee"; ctx.font="10px Segoe UI";
-      ctx.fillText(b.kind?UPGRADES[b.kind].short:b.name, x+TILE/2, y+TILE-8);
+      ctx.fillText(kindSeen?UPGRADES[kindSeen].short:b.name, x+TILE/2, y+TILE-8);
     }
     // прогресс захвата (если оспаривается) — цвет претендента
     if(st.capBy && st.capture>0){
