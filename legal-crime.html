@@ -68,9 +68,27 @@
   .opt{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);cursor:pointer;
     background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 11px}
   .opt input{accent-color:var(--gold);cursor:pointer}
-  .legend{display:flex;gap:14px;align-items:center;font-size:11px;color:var(--dim)}
-  .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
-  .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+  /* Табло сторон — ЕДИНСТВЕННОЕ место, где цвет стороны сопоставлен её имени:
+     имя написано цветом стороны и подпёрто её же полосой слева. Отдельной легенды
+     с кружками рядом нет — она повторяла ровно то же сопоставление второй раз,
+     и обе половины из-за этого приходилось мельчить. */
+  #standings{border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--panel2)}
+  #standings .row{display:flex;align-items:stretch;border-top:1px solid var(--line)}
+  #standings .row:first-child{border-top:0}
+  #standings .bar{flex:0 0 5px}                 /* полоса цвета стороны во всю высоту строки */
+  #standings .nm{flex:1 1 auto;min-width:0;display:flex;align-items:center;
+    padding:0 4px 0 9px;font-size:14px;font-weight:700;line-height:1.15;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #standings .n{flex:0 0 46px;display:flex;align-items:center;justify-content:center;
+    padding:8px 0;font-size:17px;font-weight:700;line-height:1}
+  #standings .n.dash{color:var(--dim);font-weight:400}
+  /* шапка задаёт колонкам подписи один раз на всё табло */
+  #standings .hd{background:var(--panel)}
+  #standings .hd .nm,#standings .hd .n{font-size:9px;font-weight:600;color:var(--dim);
+    text-transform:uppercase;letter-spacing:.5px;padding-top:5px;padding-bottom:5px}
+  /* выбывшая сторона: строку не убираем — по ней видно, чем она владела до конца */
+  #standings .out{opacity:.42}
+  #standings .out .nm{text-decoration:line-through}
   .hint{font-size:11px;color:var(--dim);line-height:1.5;border-top:1px solid var(--line);padding-top:10px}
   .hint b{color:var(--txt)}
   /* Контекстная панель заведения — висит у самой точки на карте, а не в правом меню:
@@ -194,8 +212,10 @@
     <!-- деньги, доход, расход и доли рынка живут в строке сверху: они нужны всегда,
          а правое меню прокручивается покупками -->
 
-    <div class="legend" id="legend"></div>
-    <div id="standings" style="font-size:11px;color:var(--dim);line-height:1.6"></div>
+    <!-- Табло сторон. Цвет ↔ имя сопоставлены здесь ровно один раз: строку красит
+         сама надпись и полоса слева, отдельной легенды с кружками нет. -->
+    <div class="grp-title">Силы в городе</div>
+    <div id="standings"></div>
 
     <div class="grp-title">Нанять бойца в штабе — клавиши 1 · 2 · 3 · 4</div>
     <button class="buy" id="buyBouncer">
@@ -753,6 +773,9 @@ const TEAM={
   ai2:   {main:"#b06bff", dark:"#2c1257", shot:"#d9bcff", name:"Фиолетовые"},
   ai3:   {main:"#e8974a", dark:"#5a3410", shot:"#ffd9ab", name:"Оранжевые"},
 };
+// Ничья точка — тоже «сторона» на вид: цвет у неё один на карту, плитку и табло.
+const NEUTRAL_COL="#c9a24a";
+function ownerColor(o){ return o==="neutral"?NEUTRAL_COL:TEAM[o].main; }
 const AI_KEYS=["ai1","ai2","ai3"];
 let factions=["player","ai1"];          // активный список сторон, задаётся в initWorld
 function aiTeams(){ return factions.filter(t=>t!=="player"); }
@@ -2575,7 +2598,7 @@ function draw(){
     }
     // владелец, захват и тип заведения — глазами игрока: вне обзора рисуем последнее известное
     const st=bizView("player",b), kindSeen=st.kind||null;
-    const col = st.owner==="neutral"?"#c9a24a":TEAM[st.owner].main;
+    const col = ownerColor(st.owner);
     ctx.fillStyle="#3a4657"; ctx.fillRect(x+3,y+3,TILE-6,TILE-6);
     ctx.strokeStyle=col; ctx.lineWidth=b.hq?5:3; ctx.strokeRect(x+4,y+4,TILE-8,TILE-8);
     if(b===selBiz){   // выбранная под улучшение точка — белым, как кольцо выделенного бойца
@@ -2778,7 +2801,7 @@ function drawMinimap(){
     ctx.fillStyle=u.color; ctx.fillRect(m.x+u.x*sx-1,m.y+u.y*sy-1,2.4,2.4); });
   businesses.forEach(b=>{
     const st=bizView("player",b);
-    ctx.fillStyle=st.owner==="neutral"?"#c9a24a":TEAM[st.owner].main;
+    ctx.fillStyle=ownerColor(st.owner);
     const s=b.hq?7:5;
     ctx.fillRect(m.x+b.x*sx-s/2,m.y+b.y*sy-s/2,s,s);
     ctx.strokeStyle=b.hq?"#fff":"rgba(0,0,0,.6)"; ctx.lineWidth=1; ctx.strokeRect(m.x+b.x*sx-s/2,m.y+b.y*sy-s/2,s,s);
@@ -2875,14 +2898,26 @@ function updateUI(){
   document.getElementById("market").innerHTML = MARKET_KEYS.map(k=>
     `<div class="mkt"><div class="k">${UPGRADES[k].name}</div>`+
     `<div class="v">${marketPct("player",k)}%<small>${marketCount("player",k)} шт</small></div></div>`).join("");
-  // легенда и табло по активным фракциям
-  document.getElementById("legend").innerHTML =
-    factions.map(f=>`<span><i style="background:${TEAM[f].main}"></i>${teamLabel(f)}${alive(f)?"":" ✝"}</span>`).join("")
-    + `<span><i style="background:#c9a24a"></i>ничьи</span>`;
-  document.getElementById("standings").innerHTML = factions.map(f=>{
+  // Табло сторон: строка на каждую фракцию плюс ничьи. Здесь и только здесь цвет
+  // стороны сопоставлен её имени — надписью в цвете стороны и полосой слева;
+  // прежняя легенда из кружков говорила ровно то же самое второй раз.
+  // Ничьи в табло не «пятая сторона», а счётчик того, что ещё не разобрано.
+  const rows=factions.map(f=>{
     const n=businesses.filter(b=>b.owner===f).length, u=units.filter(x=>x.team===f).length;
-    return `<div style="color:${TEAM[f].main}">${teamLabel(f)}: ${n} бизн · ${u} бойц${alive(f)?"":" — выбыл"}</div>`;
-  }).join("");
+    const dead=!alive(f), col=TEAM[f].main;
+    // своя строка подсвечена своим же цветом — 8% поверх фона, чтобы взгляд цеплялся за неё
+    return `<div class="row${dead?" out":""}"${f==="player"?` style="background:${col}14"`:""}>`+
+      `<div class="bar" style="background:${col}"></div>`+
+      `<div class="nm" style="color:${col}">${teamLabel(f)}${dead?" ✝":""}</div>`+
+      `<div class="n">${n}</div><div class="n">${u}</div></div>`;
+  });
+  rows.push(`<div class="row"><div class="bar" style="background:${NEUTRAL_COL}"></div>`+
+    `<div class="nm" style="color:${NEUTRAL_COL}">Ничьи</div>`+
+    `<div class="n">${businesses.filter(b=>b.owner==="neutral").length}</div>`+
+    `<div class="n dash">—</div></div>`);
+  document.getElementById("standings").innerHTML =
+    `<div class="row hd"><div class="bar"></div><div class="nm"></div>`+
+    `<div class="n">точки</div><div class="n">бойцы</div></div>`+rows.join("");
   refreshBuyUI();
   refreshUpgradeUI();
 }
