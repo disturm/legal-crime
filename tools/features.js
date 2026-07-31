@@ -884,6 +884,175 @@ function ok(name, cond, extra) {
   ok("сид карты записан", g.mapSeed > 0, `mapSeed=${g.mapSeed}`);
 }
 
+// ---------- размер карты: три пресета, выбор перед партией ----------
+// COLS/ROWS/BIZ_CAP стали переменными, а на них завязаны буферы (туман, волна BFS)
+// и рендер. Здесь проверяется, что размер переезжает целиком, а не наполовину.
+{
+  const g = loadGame();
+  const SEEDS = [3001, 3002, 3003, 3004];
+  const keys = g.SIZE_KEYS;
+
+  ok("размеров ровно три", keys.length === 3, keys.join(", "));
+  // Дефолт тестов и дефолт игры — РАЗНЫЕ, и их легко случайно свести: тесты гоняют десятки
+  // миров подряд (большая карта делает прогон дорогим), а игра открывается на большой.
+  ok("тесты по умолчанию идут на маленькой карте", g.mapSize === "small", g.mapSize);
+  ok("в игре по умолчанию средняя карта", g.DEFAULT_SIZE === "normal" && g.wantSize === "normal",
+    `${g.DEFAULT_SIZE} / ${g.wantSize}`);
+  ok("у каждого размера своя кнопка на старте", keys.every(k => g.els[g.szId(k)]),
+    "нет кнопки: " + keys.filter(k => !g.els[g.szId(k)]).join(", "));
+
+  // лесенка: и площадь, и число точек растут вместе — плотность точек примерно одна,
+  // иначе размер тайком стал бы рычагом сложности сам по себе
+  const area = k => g.MAP_SIZES[k].cols * g.MAP_SIZES[k].rows;
+  ok("площадь растёт от размера к размеру",
+    keys.every((k, i) => i === 0 || area(k) > area(keys[i - 1])),
+    keys.map(k => `${k} ${area(k)}`).join(", "));
+  ok("число точек растёт вместе с площадью",
+    keys.every((k, i) => i === 0 || g.MAP_SIZES[k].biz > g.MAP_SIZES[keys[i - 1]].biz),
+    keys.map(k => `${k} ${g.MAP_SIZES[k].biz}`).join(", "));
+  // Плотность точек на маленькой карте выше не по недосмотру: партия на четыре фракции
+  // требует минимум 16 точек (validateBiz), и на 520 клетках честная доля большой карты
+  // (≈15) в этот минимум не влезает. Разбег ограничен, чтобы «маленький» не превратился
+  // в карту, где точек столько же, сколько на большой, — тогда он стал бы просто лёгким.
+  const dens = keys.map(k => g.MAP_SIZES[k].biz / area(k));
+  ok("плотность точек по размерам расходится в пределах четверти",
+    Math.max(...dens) / Math.min(...dens) < 1.25,
+    keys.map((k, i) => `${k} ${(dens[i] * 1000).toFixed(1)}‰`).join(", "));
+  ok("на самом маленьком есть запас над минимумом четырёх фракций",
+    g.MAP_SIZES[keys[0]].biz >= 18, `${g.MAP_SIZES[keys[0]].biz} точек против минимума 16`);
+
+  const bad = { grid: [], comp: [], spots: [], hq: [], plain: [], few: [] };
+  for (const k of keys) {
+    const s = g.MAP_SIZES[k];
+    for (const seed of SEEDS) {
+      g.reset(3, seed, k);
+      if (g.COLS !== s.cols || g.ROWS !== s.rows || g.WORLD_W !== s.cols * g.TILE ||
+          g.WORLD_H !== s.rows * g.TILE || g.BIZ_CAP !== s.biz ||
+          g.grid.length !== s.rows || g.grid[0].length !== s.cols) bad.grid.push(k + "/" + seed);
+      // plainGrid — аварийный откат без рельефа: на нём нет воды. Если сюда попадаем,
+      // значит biz задран выше того, что генератор реально размещает на этой площади.
+      if (!g.grid.some(row => row.includes(g.T.WATER))) bad.plain.push(k + "/" + seed);
+      if (g.businesses.length < Math.max(12, g.factions.length * 4)) bad.few.push(k + "/" + seed);
+      if (g.landComponents().sizes.length !== 1) bad.comp.push(k + "/" + seed);
+      if (!g.businesses.every(b => g.captureSpots(b).length)) bad.spots.push(k + "/" + seed);
+      const hqs = g.factions.map(f => g.factionHQ(f));
+      const from = g.captureSpots(hqs[0])[0];
+      if (!hqs.slice(1).every(h => !!g.findPath(from.x, from.y, g.captureSpots(h)[0].x, g.captureSpots(h)[0].y)))
+        bad.hq.push(k + "/" + seed);
+    }
+  }
+  ok("размер переехал целиком: COLS/ROWS/WORLD/BIZ_CAP и сама сетка", !bad.grid.length, bad.grid.join(", "));
+  ok("рельеф генерируется на всех размерах, без отката в plainGrid", !bad.plain.length, bad.plain.join(", "));
+  ok("точек хватает на четыре фракции на любом размере", !bad.few.length, bad.few.join(", "));
+  ok("земля односвязна на всех размерах", !bad.comp.length, bad.comp.join(", "));
+  ok("у каждой точки есть подход на всех размерах", !bad.spots.length, bad.spots.join(", "));
+  ok("штабы взаимно достижимы на всех размерах", !bad.hq.length, bad.hq.join(", "));
+
+  // Буферы, посчитанные по COLS*ROWS, обязаны переехать вместе с картой: большая карта,
+  // потом маленькая — самый опасный порядок, старый буфер длиннее и молча «работает».
+  g.reset(2, 3001, "large");
+  g.reset(2, 3001, "small");
+  const cells = g.COLS * g.ROWS;
+  ok("туман переехал на новый размер", g.factions.every(f => g.vis[f].length === cells),
+    g.factions.map(f => g.vis[f].length).join(", "));
+  const hq = g.playerHQ();
+  ok("волна BFS переехала на новый размер", g.distFrom(hq.x, hq.y).length === cells);
+  ok("камера зажимается по новому миру", (g.cam.x < g.WORLD_W && g.cam.y < g.WORLD_H),
+    `cam ${Math.round(g.cam.x)},${Math.round(g.cam.y)} мир ${g.WORLD_W}x${g.WORLD_H}`);
+
+  // Размер держится между партиями: «Заново» не должно втихую вернуть игрока на большую карту.
+  g.reset(2, 3002);
+  ok("без явного размера партия идёт на прежнем", g.mapSize === "small" && g.COLS === g.MAP_SIZES.small.cols,
+    `${g.mapSize} ${g.COLS}x${g.ROWS}`);
+
+  // Выбор на стартовом экране — отдельно от живого мира: кнопка не должна менять
+  // COLS/ROWS под уже нарисованной картой.
+  g.pickSize("large");
+  ok("кнопка размера не трогает живой мир", g.mapSize === "small" && g.wantSize === "large",
+    `mapSize=${g.mapSize} wantSize=${g.wantSize}`);
+  ok("выбранная кнопка размера подсвечена", g.els[g.szId("large")].className.includes("on") &&
+    !g.els[g.szId("small")].className.includes("on"),
+    `${g.els[g.szId("large")].className} | ${g.els[g.szId("small")].className}`);
+  g.pickSize("нетакого");
+  ok("неизвестный размер игнорируется", g.wantSize === "large");
+}
+
+// ---------- стартовый экран: переключатели + одна кнопка «Начать» ----------
+{
+  const g = loadGame();
+  ok("у каждого числа противников своя кнопка", [1, 2, 3].every(n => g.els["ovN" + n]));
+  ok("кнопка «Начать» есть", !!g.els.ovGo);
+  ok("галка «Без тумана» есть", !!g.els.ovNoFog);
+
+  // Число противников — теперь переключатель, а не старт: клик по нему партию не начинает.
+  const before = g.factions.length;
+  g.pickAI(3);
+  ok("кнопка противников партию не начинает", g.wantAI === 3 && g.factions.length === before,
+    `wantAI=${g.wantAI}, фракций ${g.factions.length} было ${before}`);
+  ok("выбранное число противников подсвечено",
+    g.els.ovN3.className.includes("on") && !g.els.ovN2.className.includes("on"),
+    `${g.els.ovN3.className} | ${g.els.ovN2.className}`);
+  g.pickAI(9);
+  ok("число противников зажато в 1..3", g.wantAI === 3, `wantAI=${g.wantAI}`);
+
+  // «Начать» собирает мир из всех трёх переключателей разом.
+  g.pickSize("normal"); g.pickAI(2); g.setNoFog(false);
+  g.startGame();
+  ok("«Начать» строит мир по выбранным настройкам",
+    g.factions.length === 3 && g.mapSize === "normal" && g.fogOn === true,
+    `фракций ${g.factions.length}, ${g.mapSize}, туман ${g.fogOn}`);
+  ok("стартовый экран убран", g.els.over.style.display === "none");
+
+  // На конце партии выбирать нечего: показана только «Заново».
+  g.showOver(false);
+  ok("на конце партии показана только «Заново»",
+    g.els.ovAgain.style.display === "inline-block" && g.els.ovGo.style.display === "none" &&
+    g.els.ovStart.style.display === "none",
+    `назад=${g.els.ovAgain.style.display} начать=${g.els.ovGo.style.display}`);
+
+  // Выбор держится между партиями: «Заново» не должно втихую вернуть настройки к дефолту.
+  g.showStart();
+  ok("«Заново» показывает прежний выбор",
+    g.wantSize === "normal" && g.wantAI === 2 && g.els.ovN2.className.includes("on") &&
+    g.els[g.szId("normal")].className.includes("on"), `${g.wantSize} / ${g.wantAI}`);
+  ok("стартовый экран снова предлагает «Начать»",
+    g.els.ovGo.style.display === "inline-block" && g.els.ovAgain.style.display === "none");
+}
+
+// ---------- «Без тумана войны»: снимается сразу у всех сторон ----------
+{
+  const g = loadGame();
+  ok("по умолчанию туман включён", g.wantFog === true && !g.els.ovNoFog.checked);
+
+  g.reset(2, 8001);
+  const enemy = g.units.find(u => u.team !== "player");
+  ok("с туманом чужой боец на старте не виден", !g.canSee("player", enemy.x, enemy.y));
+
+  g.setNoFog(true);
+  ok("галка «Без тумана» гасит туман только в выборе, не в живом мире",
+    g.wantFog === false && g.fogOn === true, `wantFog=${g.wantFog} fogOn=${g.fogOn}`);
+
+  g.reset(2, 8001, undefined, false);
+  ok("новая партия идёт без тумана", g.fogOn === false);
+  const e2 = g.units.find(u => u.team !== "player");
+  ok("без тумана чужой боец виден сразу", g.canSee("player", e2.x, e2.y));
+  // Симметрия — не украшение: фогнуть одну сторону значит мерить не сложность, а читерство.
+  ok("без тумана видят ВСЕ стороны, а не только игрок",
+    g.factions.every(f => g.units.every(u => g.canSee(f, u.x, u.y))));
+  // vis читают и рендер, и тесты: «видно всё» обязано выглядеть одинаково во всех местах
+  g.updateVision(1);
+  ok("без тумана vis заполнен целиком",
+    g.factions.every(f => g.vis[f].every(v => v === 1)));
+  const foreign = g.businesses.find(b => b.owner !== "player" && b.owner !== "neutral");
+  ok("без тумана владелец чужой точки известен",
+    g.knownOwner("player", foreign) === foreign.owner,
+    `${g.knownOwner("player", foreign)} вместо ${foreign.owner}`);
+  // Обратно: следующая партия с туманом снова прячет чужих.
+  g.reset(2, 8001, undefined, true);
+  const e3 = g.units.find(u => u.team !== "player");
+  ok("туман возвращается следующей партией", g.fogOn === true && !g.canSee("player", e3.x, e3.y));
+}
+
 // ---------- звук: выстрелы фогнуты, тумблеры едины, джаз идёт ----------
 {
   // с заглушкой WebAudio: без неё весь звуковой модуль — no-op (это проверяется ниже отдельно)
@@ -965,6 +1134,19 @@ function ok(name, cond, extra) {
   g.toggleMute();
   ok("повторный M возвращает прежние галки", g.musicOn === true && g.sfxOn === false,
     `музыка ${g.musicOn}, звуки ${g.sfxOn}`);
+
+  // Без тумана слух тоже открыт: у sfx одна проверка обзора, и она обязана слушаться флага.
+  // Затухание за краем экрана при этом остаётся — туман и расстояние это разные фильтры.
+  // Блок последний в секции: он пересоздаёт мир, и бойцы предыдущих проверок протухают.
+  g.setAudio("sfx", true, true); g.setAudio("music", false, true);
+  g.reset(1, 8002, undefined, false);
+  const nf = g.units.find(x => x.team !== "player");
+  g.cam.x = nf.x - 1200 / 2; g.cam.y = nf.y - 800 / 2;
+  wait(1);
+  ok("без тумана выстрел неразведанного бойца слышно", shot("shooter", nf.x, nf.y).okShot);
+  wait(1);
+  ok("без тумана далёкий выстрел всё равно не слышно",
+    !shot("shooter", nf.x + g.WORLD_W, nf.y).okShot);
 }
 
 // ---------- без AudioContext игра работает как раньше ----------

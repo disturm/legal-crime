@@ -17,7 +17,15 @@ const BRIDGE = `
   get ended(){return ended}, get wave(){return wave},
   get outcome(){return outcome}, get factions(){return factions},
   set W(v){W=v}, set H(v){H=v},
-  TYPES, BUY_KEYS, AI_BRIBE, TEAM, grid, TILE, COLS, ROWS, WORLD_W, WORLD_H, unlocks,
+  // размер карты теперь переменный — только через геттеры, иначе мост запомнит стартовый
+  get COLS(){return COLS}, get ROWS(){return ROWS},
+  get WORLD_W(){return WORLD_W}, get WORLD_H(){return WORLD_H},
+  get BIZ_CAP(){return BIZ_CAP}, get mapSize(){return mapSize},
+  get wantSize(){return wantSize}, get wantAI(){return wantAI}, get wantFog(){return wantFog},
+  get fogOn(){return fogOn},
+  MAP_SIZES, SIZE_KEYS, DEFAULT_SIZE, DEFAULT_AI, pickSize, pickAI, setNoFog, szId,
+  startGame, showStart, showOver,
+  TYPES, BUY_KEYS, AI_BRIBE, TEAM, grid, TILE, unlocks,
   T, walkableT, opaqueT, buildableT, inMap, blocksSight, nextToWalk,
   buildings, blocks, roadCols, roadRows, isRoadCol, isRoadRow,
   get mapSeed(){return mapSeed},
@@ -94,9 +102,17 @@ function audioStub(log) {
   };
 }
 
+// В игре размер карты по умолчанию `normal` (а замеры баланса сняты на `large`).
+// В tools/ по умолчанию МАЛЕНЬКАЯ карта: тесты гоняют десятки миров подряд, а update
+// квадратичен по юнитам, и большая карта делает прогон дорогим по реальному времени.
+// Кому нужен конкретный размер — передаёт его третьим аргументом g.reset (так делает
+// блок «размер карты» в features.js и обход размеров в draw.js).
+const TEST_SIZE = "small";
+
 // Возвращает api загруженной партии. Каждый вызов — новый мир со своей картой.
 // opts.audio — подсунуть заглушку WebAudio. По умолчанию её НЕТ: так проверяется,
 // что игра живёт вообще без AudioContext, и sim.js не платит за звук на каждом выстреле.
+// opts.size — размер карты стартового мира и всех последующих g.reset без явного размера.
 function loadGame(w = 1200, h = 800, opts = {}) {
   const html = fs.readFileSync(GAME, "utf8");
   const code = html.match(/<script>([\s\S]*)<\/script>/)[1] + BRIDGE;
@@ -135,6 +151,9 @@ function loadGame(w = 1200, h = 800, opts = {}) {
   sandbox.api.W = w; sandbox.api.H = h;   // ResizeObserver в Node не срабатывает
   sandbox.api.els = els;                  // заглушки панели: по ним видно, что показано игроку
   sandbox.api.audioLog = log;             // счётчик голосов звуковой заглушки
+  // Мир при загрузке скрипта строится на игровом дефолте (large). Пересоздаём его на тестовом
+  // размере: дальше initWorld без явного size держит именно его, и весь прогон идёт дёшево.
+  sandbox.api.reset(2, undefined, opts.size || TEST_SIZE);
   return sandbox.api;
 }
 

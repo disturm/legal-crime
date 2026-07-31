@@ -22,7 +22,13 @@ const SEEDS = [1007, 4007, 8007, 12007];
 const per = Math.max(1, Math.floor(FRAMES / SEEDS.length));
 
 SEEDS.forEach((seed, si) => {
-  g.reset(si === SEEDS.length - 1 ? 3 : 2, seed);   // последний прогон — на трёх ИИ
+  // и по размеру карты на прогон: миникарта, зажим камеры и обход grid считаются
+  // по COLS/ROWS, а они теперь меняются между партиями
+  // Последний прогон — ещё и без тумана: слой тумана тогда не рисуется вовсе,
+  // а бойцы и пули перестают отсекаться по обзору — отдельная ветка рендера.
+  const size = g.SIZE_KEYS[si % g.SIZE_KEYS.length];
+  const last = si === SEEDS.length - 1;
+  g.reset(last ? 3 : 2, seed, size, !last);   // последний прогон — на трёх ИИ
   for (let i = 0; i < per * 0.85; i++) frame();
   // по бойцу каждого класса: силуэт, оружие и звук выстрела — отдельные ветки, а ИИ
   // за партию может так и не открыть дорогой класс, и его ветка осталась бы непроверенной
@@ -36,7 +42,8 @@ SEEDS.forEach((seed, si) => {
   for (let i = 0; i < per * 0.15; i++) frame();
 });
 
-console.log(`draw OK: ${per * SEEDS.length} кадров на ${SEEDS.length} картах без ошибок, ` +
+console.log(`draw OK: ${per * SEEDS.length} кадров на ${SEEDS.length} картах ` +
+  `(размеры: ${SEEDS.map((_, si) => g.SIZE_KEYS[si % g.SIZE_KEYS.length]).join(", ")}) без ошибок, ` +
   `юнитов: ${g.units.length}, бизнесов у игрока: ` +
   `${g.businesses.filter(b => b.owner === "player").length}/${g.businesses.length}, ` +
   `звуковых голосов: ${voices}`);
