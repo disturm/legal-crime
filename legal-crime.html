@@ -171,7 +171,7 @@
         <!-- Тренировочный центр — не доходное заведение, а логистика: отдельной строкой
              во всю ширину, чтобы не читался пятым в ряду доходных -->
         <button class="mini wide" id="buyUpGym">
-          <span class="nm"><svg class="ik" viewBox="0 0 16 16"><path d="M1 5.5h1.8v5H1zM3.3 6.6h1.6v2.8H3.3zM5.2 7.2h5.6v1.6H5.2zM11.1 6.6h1.6v2.8h-1.6zM13.2 5.5H15v5h-1.8z"/></svg><span style="flex:1">Тренировочный центр<small>дохода не даёт: держит точку сбора найма, −$10/с</small></span></span>
+          <span class="nm"><svg class="ik" viewBox="0 0 16 16"><path d="M1 5.5h1.8v5H1zM3.3 6.6h1.6v2.8H3.3zM5.2 7.2h5.6v1.6H5.2zM11.1 6.6h1.6v2.8h-1.6zM13.2 5.5H15v5h-1.8z"/></svg><span style="flex:1">Тренировочный центр<small>дохода не даёт: держит точку сбора найма, −$20/с</small></span></span>
           <span class="cost" id="costUpGym">$1000</span>
         </button>
       </div>
@@ -185,7 +185,8 @@
       </button>
       <div class="note">Одно заведение на точку, штаб не улучшается. Сменить тип — только
         через снос: вложенное сгорает, новое покупается за полную цену. Разбирается
-        и тренировочный центр — сбор тогда сам возвращается в штаб.</div>
+        и тренировочный центр — сбор тогда сам возвращается в штаб. Точку сбора держит
+        и любой свой штаб, включая отбитый у выбывшего соперника.</div>
     </div>
   </div>
   <div id="side">
@@ -271,10 +272,13 @@
       заведение, зато и захватывается такая точка дольше.<br><br>
 
       <b>Тренировочный центр</b> — заведение особого рода: дохода не даёт и стоит
-      <b>$10/с</b>, зато держит <b>точку сбора</b> — нанятые бойцы выходят у него, а не
+      <b>$20/с</b>, зато держит <b>точку сбора</b> — нанятые бойцы выходят у него, а не
       в штабе (флажок на плитке). Центров можно строить сколько угодно, сбор в каждый
       момент один; переносится и возвращается в штаб кнопкой в панельке точки.
       Разберёшь центр или потеряешь — сбор сам вернётся в штаб.<br><br>
+      Сбор держит и <b>любой свой штаб</b> — в том числе <b>отбитый у соперника</b>:
+      захваченная база остаётся базой, и зал в ней строить незачем. Бесплатный сбор
+      на другом конце города — за него уже заплачено чужим штабом.<br><br>
       Цель — свалить <b>штабы</b> всех соперников и остаться последним.
       <b>Свой штаб терять нельзя.</b> Бизнесы дают доход, но бойцы требуют расходов.
     </div>
@@ -824,9 +828,9 @@ const UP_KEYS=["bar","strip","casino","fixer","gym"];   // порядок кно
 // Рыночные типы — те, что вообще про доход. Выводятся из пометки, а не перечисляются
 // руками: забыть новый тип в одном из списков — обычный способ развести их между собой.
 const MARKET_KEYS=UP_KEYS.filter(k=>!UPGRADES[k].rally);   // строки рынка и выбор ИИ
-// Пол рынка: пока построено меньше 10 заведений типа, доля считается от 10.
+// Пол рынка: пока построено меньше 5 заведений типа, доля считается от 5.
 // Без пола первая же построенная точка давала бы 100%, и формула взрывалась бы на старте.
-const MARKET_MIN=10;
+const MARKET_MIN=5;
 // Рынок — открытая статистика района: размер и доли считаются ПО ФАКТУ, а не по туману.
 // Фогнут не рынок, а владелец конкретной точки.
 function marketCount(f,kind){ let n=0; for(const b of businesses) if(b.kind===kind&&b.owner===f) n++; return n; }
@@ -890,20 +894,28 @@ function demolish(f,b){
 function bizUpkeep(b,kind){ if(kind===undefined) kind=b.kind; return (kind && UPGRADES[kind].upkeep) || 0; }
 
 // ---------- Точка сбора: где появляется нанятый боец ----------
-// По умолчанию — штаб. Тренировочный центр перехватывает сбор на себя, и это
-// ЕДИНСТВЕННОЕ, что он делает: дохода не даёт, стоит $10/с.
+// По умолчанию — родной штаб. Держать сбор умеют два рода точек:
+//   • тренировочный центр — это ЕДИНСТВЕННОЕ, что он делает: дохода не даёт, стоит $20/с;
+//   • ЛЮБОЙ штаб во владении фракции, включая отбитый у выбывшего соперника —
+//     захваченная чужая база остаётся базой, и странно было бы строить в ней зал,
+//     чтобы нанимать там же. Это единственный сбор, который не стоит ни денег,
+//     ни содержания, — но и достаётся он ценой чужого штаба, то есть выбывшей фракции.
 // Ворота общие для всех фракций — как у улучшений, взяток и сноса.
-const rally={};                       // фракция → заведение-зал; нет записи = сбор в штабе
+const rally={};                       // фракция → заведение-сбор; нет записи = родной штаб
 function resetRally(){ for(const k in rally) delete rally[k]; }
-function canRally(f,b){ return !!(b && b.owner===f && b.kind && UPGRADES[b.kind].rally); }
+function canRally(f,b){ return !!(b && b.owner===f && (b.hq || (b.kind && UPGRADES[b.kind].rally))); }
+// Родной штаб фракции — тот, к которому сбор возвращается сам. Отличать его от прочих
+// штабов приходится по СТАБИЛЬНОМУ b.hq, а не по владельцу: владелец у отбитой базы
+// тоже свой, и по нему «вернуть сбор домой» стало бы неотличимо от «оставить здесь».
+function homeHQ(f,b){ return !!(b && b.hq===f); }
 function setRally(f,b){
   if(!b){ rally[f]=null; return true; }   // назад в штаб — всегда можно
   if(!canRally(f,b)) return false;
   rally[f]=b; return true;
 }
-// Куда сейчас идёт найм. Зал проверяется ПО ФАКТУ на каждом обращении, поэтому
-// разобранный или отбитый врагом центр возвращает сбор в штаб сам — без хука
-// в demolish и в захвате, которые оба легко забыть.
+// Куда сейчас идёт найм. Точка сбора проверяется ПО ФАКТУ на каждом обращении, поэтому
+// разобранный центр и отбитая врагом точка (хоть зал, хоть трофейный штаб) возвращают
+// сбор в родной штаб сами — без хука в demolish и в захвате, которые оба легко забыть.
 function rallyPoint(f){
   const b=rally[f];
   if(b && canRally(f,b)) return b;
@@ -963,7 +975,7 @@ function initWorld(aiCount,seed,size,fog){
   units.length=0; bullets.length=0; fx.length=0;
   uid=1;
   ended=false; outcome=null; paused=false;
-  selected.clear(); selecting=false; selectStart=null; selBiz=null;
+  selected.clear(); cancelSelect(); selBiz=null;
   enemyTimer=6; waveTimer=18; wave=0;
   resetFog();                        // туман — под новую карту и новый список сторон
   // стартовый отряд одинаков у всех: ровно 1 вышибала + 1 стрелок у своего штаба.
@@ -1029,8 +1041,9 @@ addEventListener("keydown",e=>{keys[e.code]=1;
   audioResume();                        // клавиша — такой же жест игрока, как клик
   if(e.code==="Space"){paused=!paused;e.preventDefault();}
   if(e.code==="KeyM") toggleMute();     // общий мьют; галки в панели — по отдельности
-  // Esc закрывает панельку заведения: она стоит поверх карты и своё место занимает
-  if(e.code==="Escape" && selBiz) setSelBiz(null);
+  // Esc закрывает панельку заведения: она стоит поверх карты и своё место занимает,
+  // и он же — общий отказ от начатого: недотянутая рамка снимается, ничего не выбрав
+  if(e.code==="Escape"){ cancelSelect(); if(selBiz) setSelBiz(null); }
   // найм с клавиатуры — боец сразу появляется в штабе; цифра = место класса в BUY_KEYS
   if(/^Digit[1-9]$/.test(e.code)){ const t=BUY_KEYS[+e.code.slice(5)-1]; if(t) selectBuy(t); }
   if(e.code==="KeyH"){   // мгновенно к своему штабу — стандартный хоткей жанра
@@ -1053,6 +1066,10 @@ canvas.addEventListener("wheel",e=>{
 // без зависимости от offsetX
 function evScreen(e){ const r=canvas.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; }
 function evWorld(e){ const s=evScreen(e); return s2w(s.x,s.y); }
+// Зажатая в границы канваса версия — ЕДИНСТВЕННЫЙ способ получить мировую точку
+// для курсора, ушедшего с карты: и `mouse` (по нему рисуется рамка), и конец
+// рамки считаются ею, иначе за краем карты нарисовано одно, а выделено другое.
+function s2wClamped(sx,sy){ return s2w(Math.max(0,Math.min(W,sx)), Math.max(0,Math.min(H,sy))); }
 
 canvas.addEventListener("mousedown",e=>{
   audioResume();                        // первый клик по карте — жест, по которому заводится звук
@@ -1078,18 +1095,44 @@ canvas.addEventListener("mousedown",e=>{
       // Рамку всё равно заводим: протянуть выделение можно и поверх заведения.
       const bz=pickBiz(w);
       setSelBiz((bz && bz.owner==="player") ? bz : null);
-      selecting=true; selectStart=w;
+      beginSelect(w);
     }
   }else if(e.button===2){ // ПКМ — приказ
     commandTo(w);
   }
 });
+// Рамка выделения: начало, конец и отмена — три отдельные функции, и весь её жизненный
+// цикл проходит через них. Раньше конец рамки жил в обработчике mouseup НА КАНВАСЕ,
+// и рамка повисала на экране до следующего клика, если кнопку отпускали не над картой:
+// над правым меню, над панелькой заведения или вовсе за окном браузера. Теперь
+// отпускание ловится на окне (см. ниже), а «кнопку отпустили вне окна» — по e.buttons.
+function beginSelect(w){ selecting=true; selectStart=w; }
+function cancelSelect(){ selecting=false; selectStart=null; }
+// Без аргумента конец берётся из `mouse` — последней позиции, по которой рамка была
+// нарисована. Выделяется ровно то, что игрок видел на экране.
+function endSelect(w){
+  if(!selecting){ selectStart=null; return; }
+  const a=selectStart, b=w||mouse;
+  selecting=false; selectStart=null;
+  if(!a) return;
+  const x1=Math.min(a.x,b.x),x2=Math.max(a.x,b.x),y1=Math.min(a.y,b.y),y2=Math.max(a.y,b.y);
+  if(Math.hypot(x2-x1,y2-y1)<=10) return;      // не рамка, а клик по пустому месту
+  if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
+  units.forEach(u=>{ if(u.team==="player"&&u.x>=x1&&u.x<=x2&&u.y>=y1&&u.y<=y2) selected.add(u.id); });
+  setSelBiz(null);                   // потянули рамку — значит выбирали бойцов, а не точку
+}
 // курсор слушаем на всём окне: иначе при уходе на панель координата «залипает»
 // и карта продолжает ползти сама по себе
 addEventListener("mousemove",e=>{
+  // Кнопку могли отпустить за пределами окна — тогда mouseup не придёт вообще никуда,
+  // и единственный честный признак «уже отпустили» — e.buttons на первом же движении.
+  // Проверяем ДО пересчёта `mouse`: рамка закрывается по последней позиции под кнопкой,
+  // а не по той, куда курсор успел вернуться.
+  if(!(e.buttons&1) && (selecting||mmDrag)){ mmDrag=false; endSelect(); }
+  if(!(e.buttons&4) && drag) drag=null;
   const r=canvas.getBoundingClientRect();
   mouseScreen={x:e.clientX-r.left, y:e.clientY-r.top};
-  mouse=s2w(Math.max(0,Math.min(W,mouseScreen.x)), Math.max(0,Math.min(H,mouseScreen.y)));
+  mouse=s2wClamped(mouseScreen.x, mouseScreen.y);
   // над панелью прокрутки нет: уход вправо к кнопкам — это намерение нанять,
   // а не прокрутить карту
   overCanvas = mouseScreen.x>=0 && mouseScreen.x<=W && mouseScreen.y>=0 && mouseScreen.y<=H;
@@ -1100,19 +1143,16 @@ addEventListener("mousemove",e=>{
 addEventListener("mouseout",e=>{ if(!e.relatedTarget) mouseScreen=null; });  // курсор вне окна — стоп
 // перетаскивание карты средней кнопкой — точная альтернатива краям
 addEventListener("mousedown",e=>{ if(e.button===1){ drag={x:e.clientX,y:e.clientY}; e.preventDefault(); } });
-addEventListener("mouseup",  e=>{ if(e.button===1) drag=null; if(e.button===0) mmDrag=false; });
-canvas.addEventListener("mouseup",e=>{
-  if(e.button===0 && selecting){
-    const a=selectStart, b=evWorld(e);
-    const x1=Math.min(a.x,b.x),x2=Math.max(a.x,b.x),y1=Math.min(a.y,b.y),y2=Math.max(a.y,b.y);
-    if(Math.hypot(x2-x1,y2-y1)>10){
-      if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
-      units.forEach(u=>{ if(u.team==="player"&&u.x>=x1&&u.x<=x2&&u.y>=y1&&u.y<=y2) selected.add(u.id); });
-      setSelBiz(null);                   // потянули рамку — значит выбирали бойцов, а не точку
-    }
-  }
-  selecting=false; selectStart=null;
+// Отпускание слушаем НА ОКНЕ, а не на канвасе: конец перетаскивания принадлежит
+// не той области, над которой курсор оказался, а тому, что тянули с самого начала.
+// Точка отпускания зажимается в границы канваса — так же, как `mouse`.
+addEventListener("mouseup",e=>{
+  if(e.button===1) drag=null;
+  if(e.button===0){ mmDrag=false; const s=evScreen(e); endSelect(s2wClamped(s.x,s.y)); }
 });
+// Уход из окна (Alt+Tab, переключение вкладки) — это прерванное перетаскивание,
+// а не выделение: рамку снимаем, ничего не выбирая. Иначе она переживёт возврат.
+addEventListener("blur",()=>{ cancelSelect(); drag=null; mmDrag=false; });
 // mouseScreen=null, пока курсор не двигали: иначе стартовые {0,0} сразу тянут карту влево
 let mouse={x:0,y:0}, mouseScreen=null, overCanvas=false, drag=null, mmDrag=false;
 let edgeScrollOn=false;   // прокрутка краями — опция, по умолчанию выключена
@@ -1205,18 +1245,19 @@ function playerDemolish(){
   ping(b.x,b.y,"#8b90a0");
   refreshUpgradeUI();
 }
-// Перенос точки сбора — одна кнопка на оба хода: свой зал забирает сбор себе,
-// он же отдаёт его обратно штабу. Ворота — те же canRally, что и у любой фракции.
+// Перенос точки сбора — одна кнопка на оба хода: свой зал или трофейный штаб забирает
+// сбор себе, он же отдаёт его обратно родному штабу. Ворота — те же canRally, что
+// и у любой фракции. Возвращать нечего только у родного штаба: сбор и так его.
 function playerRally(){
   const b=selBiz;
   if(!b){ toast("Сначала выбери своё заведение — ЛКМ по нему"); return; }
-  if(rallyPoint("player")===b && !b.hq){          // сбор уже здесь — значит, возвращаем
+  if(rallyPoint("player")===b && !homeHQ("player",b)){   // сбор уже здесь — значит, возвращаем
     setRally("player",null);
     const hq=playerHQ();
     toast("Точка сбора снова в штабе");
     if(hq) ping(hq.x,hq.y,TEAM.player.main);
   }else{
-    if(!canRally("player",b)){ toast("Точку сбора держит только тренировочный центр"); return; }
+    if(!canRally("player",b)){ toast("Точку сбора держит штаб или тренировочный центр"); return; }
     setRally("player",b);
     toast("Точка сбора — «"+b.name+"»: бойцы выходят здесь");
     ping(b.x,b.y,TEAM.player.main);
@@ -1301,14 +1342,15 @@ function refreshUpgradeUI(){
   document.getElementById("btnDemolish").disabled = !canDemolish("player",b);
   document.getElementById("costDemolish").textContent = (b&&b.kind) ? UPGRADES[b.kind].short : "—";
   // Точка сбора: одна кнопка на оба хода. Своя не-сборная — «перенести сюда»,
-  // сама сборная — «вернуть в штаб». Штаб сборным считается по умолчанию, поэтому
-  // отдельной кнопки у него нет: сбор и так его, пока не назначен зал.
-  const here=b && rallyPoint("player")===b;
+  // сама сборная — «вернуть в штаб». Родной штаб сборным считается по умолчанию,
+  // поэтому у него, пока сбор дома, кнопка выключена: возвращать нечего.
+  // Трофейный штаб — точка как точка, у него оба хода живые.
+  const here=b && rallyPoint("player")===b, home=homeHQ("player",b);
   document.getElementById("rallyLabel").textContent =
-    here ? "Вернуть сбор в штаб" : "Перенести точку сбора";
+    (here&&!home) ? "Вернуть сбор в штаб" : "Перенести точку сбора";
   document.getElementById("costRally").textContent =
-    !b ? "—" : here ? (b.hq?"в штабе":"здесь") : canRally("player",b) ? "сюда" : "нужен зал";
-  document.getElementById("btnRally").disabled = !(b && (canRally("player",b) || (here&&!b.hq)));
+    !b ? "—" : here ? (home?"в штабе":"здесь") : canRally("player",b) ? "сюда" : "зал или штаб";
+  document.getElementById("btnRally").disabled = !(b && (here ? !home : canRally("player",b)));
 }
 
 // ---------- ИИ фракций (каждая воюет за себя) ----------
@@ -2828,10 +2870,11 @@ function updateUI(){
   el.style.color = net>=0?"var(--green)":"var(--red)";
   document.getElementById("uiArmy").textContent=""+units.filter(u=>u.team==="player").length;
   document.getElementById("uiBiz").textContent=businesses.filter(b=>b.owner==="player").length+"/"+businesses.length;
-  // Рынок: только СВОЯ доля и размер рынка. Чужие доли — это разведка, а не витрина.
+  // Рынок: своя доля в процентах и число СВОИХ заведений. Общий размер рынка не пишем:
+  // цифра, за которой не стоит ни одного своего решения, только шумит в строке казны.
   document.getElementById("market").innerHTML = MARKET_KEYS.map(k=>
     `<div class="mkt"><div class="k">${UPGRADES[k].name}</div>`+
-    `<div class="v">${marketPct("player",k)}%<small>${marketCount("player",k)} из ${marketSize(k)}</small></div></div>`).join("");
+    `<div class="v">${marketPct("player",k)}%<small>${marketCount("player",k)} шт</small></div></div>`).join("");
   // легенда и табло по активным фракциям
   document.getElementById("legend").innerHTML =
     factions.map(f=>`<span><i style="background:${TEAM[f].main}"></i>${teamLabel(f)}${alive(f)?"":" ✝"}</span>`).join("")

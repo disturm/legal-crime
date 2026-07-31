@@ -527,7 +527,8 @@ function ok(name, cond, extra) {
     g.MARKET_KEYS.map(k => `${k} X=${g.UPGRADES[k].X}`).join(", "));
   ok("рыночные типы выведены из пометки, а не перечислены",
     g.MARKET_KEYS.join() === g.UP_KEYS.filter(k => !g.UPGRADES[k].rally).join());
-  ok("пустой рынок меряется полом 10", g.marketSize("bar") === 10 && g.marketPct("player", "bar") === 0);
+  ok("пол рынка — 5 заведений", g.MARKET_MIN === 5, `MARKET_MIN=${g.MARKET_MIN}`);
+  ok("пустой рынок меряется полом", g.marketSize("bar") === g.MARKET_MIN && g.marketPct("player", "bar") === 0);
 
   // 5 своих баров из 12 построенных: пол больше не действует, доля округляется до целых
   const pool = plain.slice(0, 12);
@@ -842,12 +843,16 @@ function ok(name, cond, extra) {
 {
   // Два стриптиза при доле 20% дают по $24; решение проблем — $36, то есть перевес
   // ×1.5 при пороге AI_SWAP_GAIN. Считаем на явных цифрах, а не на «примерно лучше».
+  // Рынок стриптиза добит чужими точками до 10: пол MARKET_MIN=5 иначе дал бы ИИ
+  // долю 40%, стриптиз стоил бы $28, и перестройка не прошла бы порог — тест мерил бы
+  // пол рынка, а не правило перестройки.
   function world() {
     const g = loadGame();
     g.reset(1);
     g.businesses.forEach(b => { b.kind = null; });
-    g.businesses.filter(b => !b.hq && b.owner !== "player").slice(0, 2)
-      .forEach(b => { b.owner = "ai1"; b.kind = "strip"; });
+    const pool = g.businesses.filter(b => !b.hq && b.owner !== "player").slice(0, 10);
+    pool.slice(0, 2).forEach(b => { b.owner = "ai1"; b.kind = "strip"; });
+    pool.slice(2).forEach(b => { b.owner = "player"; b.kind = "strip"; });
     g.aiFavor.ai1 = "fixer";
     g.funds.ai1 = 5000;
     return g;
@@ -945,6 +950,37 @@ function ok(name, cond, extra) {
   ok("чужой центр точкой сбора не назначить", !g.canRally("player", mine) && !g.setRally("player", mine));
 }
 
+// ---------- точка сбора: любой свой штаб ----------
+// Родной штаб держит сбор по умолчанию, а отбитый у выбывшей фракции — точка как точка:
+// база остаётся базой, и строить в ней зал ради найма было бы нелепо. Отличается родной
+// штаб стабильным b.hq, а не владельцем: владелец у трофея тоже свой.
+{
+  const g = loadGame();
+  g.reset(2);
+  const hq = g.playerHQ(), trophy = g.factionHQ("ai1");
+  ok("родной штаб — сбор по умолчанию", g.rallyPoint("player") === hq && g.canRally("player", hq));
+  ok("чужой штаб точкой сбора не назначить",
+    !g.canRally("player", trophy) && !g.setRally("player", trophy));
+  trophy.owner = "player";                       // штаб взят, фракция выбыла
+  ok("трофейный штаб держит сбор", g.canRally("player", trophy) &&
+    g.setRally("player", trophy) && g.rallyPoint("player") === trophy);
+  ok("родной штаб узнаётся по b.hq, а не по владельцу",
+    g.homeHQ("player", hq) && !g.homeHQ("player", trophy));
+
+  g.money = 5000;
+  const before = g.units.length;
+  g.selectBuy("bouncer");
+  const fresh = g.units[g.units.length - 1];
+  ok("наём выходит у трофейного штаба, а не у родного", g.units.length === before + 1 &&
+    Math.hypot(fresh.x - trophy.x, fresh.y - trophy.y) < Math.hypot(fresh.x - hq.x, fresh.y - hq.y),
+    `до трофея ${Math.round(Math.hypot(fresh.x - trophy.x, fresh.y - trophy.y))}, ` +
+    `до родного ${Math.round(Math.hypot(fresh.x - hq.x, fresh.y - hq.y))}`);
+
+  // отбили трофей обратно — сбор вернулся домой сам, без хука в захвате
+  trophy.owner = "ai2";
+  ok("отбитый трофейный штаб возвращает сбор домой", g.rallyPoint("player") === hq);
+}
+
 // ИИ и бот в сим тренировочный центр не строят: подкрепления ИИ и так выходят
 // у случайной СВОЕЙ точки, то есть сбор у него распределён даром. Пустить его
 // в жадность по «доходу на доллар» — значит дать ИИ денежную дыру, которой у игрока нет.
@@ -979,12 +1015,16 @@ function ok(name, cond, extra) {
   g.selBiz = mine; g.update(0.001);
   ok("панель: своя точка включает кнопки", g.els.buyUpBar.disabled === false);
   // Рынок переехал из правого меню в строку казны сверху, но остаётся тем же #market
-  ok("строка казны: рынок показывает свою долю и размер",
-    /Бар<\/div><div class="v">0%<small>0 из 10</.test(g.els.market.innerHTML), g.els.market.innerHTML);
+  ok("строка казны: рынок показывает свою долю и свои заведения",
+    /Бар<\/div><div class="v">0%<small>0 шт</.test(g.els.market.innerHTML), g.els.market.innerHTML);
   g.playerUpgrade("strip"); g.update(0.001);
   ok("панель: после улучшения кнопки гаснут", g.els.buyUpBar.disabled === true && mine.kind === "strip");
+  // 1 свой стриптиз при пустом рынке — доля считается от пола MARKET_MIN=5, то есть 20%
   ok("строка казны: доля в целых процентах",
-    /Стриптиз<\/div><div class="v">10%<small>1 из 10</.test(g.els.market.innerHTML), g.els.market.innerHTML);
+    /Стриптиз<\/div><div class="v">20%<small>1 шт</.test(g.els.market.innerHTML), g.els.market.innerHTML);
+  // общего размера рынка в строке нет: показываем только своё
+  ok("строка казны: общего размера рынка нет",
+    !/<small>[^<]*из/.test(g.els.market.innerHTML), g.els.market.innerHTML);
   // Снос и улучшение — взаимно исключающие кнопки: включена всегда ровно одна сторона
   ok("панель: после улучшения снос включён и назван",
     g.els.btnDemolish.disabled === false && g.els.costDemolish.textContent === g.UPGRADES.strip.short,
@@ -1013,7 +1053,7 @@ function ok(name, cond, extra) {
   mine.owner = "player";
   g.selBiz = mine; g.update(0.001);
   ok("панель: простая точка сбор не держит",
-    g.els.btnRally.disabled === true && g.els.costRally.textContent === "нужен зал",
+    g.els.btnRally.disabled === true && g.els.costRally.textContent === "зал или штаб",
     g.els.costRally.textContent);
   g.playerUpgrade("gym"); g.update(0.001);
   ok("панель: у своего центра кнопка сбора включена",
@@ -1031,6 +1071,28 @@ function ok(name, cond, extra) {
   // рынок — только доходные типы: у зала доли нет, и строки о нём быть не должно
   ok("панель: центра нет среди строк рынка",
     !new RegExp(g.UPGRADES.gym.name).test(g.els.market.innerHTML), g.els.market.innerHTML);
+
+  // Трофейный штаб — та же кнопка на оба хода: у родного штаба «вернуть» нечего,
+  // у отбитого оба хода живые. Разница считается по b.hq, и панель обязана её видеть.
+  const trophy = g.factionHQ("ai1");
+  trophy.owner = "player";
+  g.selBiz = trophy; g.update(0.001);
+  ok("панель: у трофейного штаба кнопка сбора включена",
+    g.els.btnRally.disabled === false && g.els.costRally.textContent === "сюда" &&
+    /Перенести/.test(g.els.rallyLabel.textContent), g.els.costRally.textContent);
+  g.playerRally(); g.update(0.001);
+  ok("панель: сбор переехал в трофейный штаб и кнопка стала обратной",
+    g.rallyPoint("player") === trophy && g.els.costRally.textContent === "здесь" &&
+    /Вернуть/.test(g.els.rallyLabel.textContent), g.els.rallyLabel.textContent);
+  // родной штаб при этом предлагает забрать сбор обратно себе
+  g.selBiz = g.playerHQ(); g.update(0.001);
+  ok("панель: родной штаб зовёт сбор обратно",
+    g.els.btnRally.disabled === false && g.els.costRally.textContent === "сюда");
+  g.playerRally(); g.update(0.001);
+  ok("панель: сбор снова дома, и возвращать нечего",
+    g.rallyPoint("player") === g.playerHQ() &&
+    g.els.btnRally.disabled === true && g.els.costRally.textContent === "в штабе",
+    g.els.costRally.textContent);
 }
 
 // ---------- разметка: кнопка на каждый тип заведения ----------
@@ -1106,6 +1168,63 @@ function ok(name, cond, extra) {
   ok("панелька: закрывается сразу, не дожидаясь кадра", panel.style.display === "none");
   g.setSelBiz(mine);
   ok("панелька: открывается сразу, не дожидаясь кадра", panel.style.display === "block");
+}
+
+// ---------- рамка выделения: закрывается, где бы ни отпустили кнопку ----------
+// Раньше конец рамки ловился на канвасе, и отпускание над правым меню, над панелькой
+// заведения или за окном браузера до него не доходило: рамка висела на экране
+// до следующего клика. Обработчики в песочнице не срабатывают, поэтому проверяем
+// сам жизненный цикл (beginSelect/endSelect/cancelSelect) плюс место подписки в HTML.
+{
+  const g = loadGame();
+  g.reset(1, 4242);
+  const mine = g.units.filter(u => u.team === "player");
+  const x1 = Math.min(...mine.map(u => u.x)), x2 = Math.max(...mine.map(u => u.x));
+  const y1 = Math.min(...mine.map(u => u.y)), y2 = Math.max(...mine.map(u => u.y));
+
+  g.beginSelect({ x: x1 - 40, y: y1 - 40 });
+  ok("рамка: пока тянут — она есть", g.selecting === true && g.selectStart !== null);
+  g.endSelect({ x: x2 + 40, y: y2 + 40 });
+  ok("рамка: выделила всех своих внутри", g.selected.size === mine.length,
+    `выделено ${g.selected.size} из ${mine.length}`);
+  ok("рамка: после отпускания её нет", g.selecting === false && g.selectStart === null);
+
+  // кнопку отпустили вне окна — события с координатой нет вообще, конец берётся
+  // из `mouse`: последней позиции, по которой рамку и рисовали
+  g.selected.clear();
+  g.beginSelect({ x: x1 - 40, y: y1 - 40 });
+  g.mouse = { x: x2 + 40, y: y2 + 40 };
+  g.endSelect();
+  ok("рамка: отпускание вне окна закрывает её и выделяет как нарисовано",
+    g.selecting === false && g.selected.size === mine.length,
+    `selecting=${g.selecting}, выделено ${g.selected.size}`);
+
+  // курсор за краем канваса — считаем по краю экрана: рисуется рамка тем же зажимом
+  g.cam.zoom = 1; g.cam.x = x1 - 600; g.cam.y = y1 - 400;
+  const corner = g.s2w(1200, 800), out = g.s2wClamped(4000, 3000);
+  ok("рамка: точка за краем канваса зажимается в его границы",
+    Math.abs(out.x - corner.x) < 1e-6 && Math.abs(out.y - corner.y) < 1e-6,
+    `${out.x},${out.y} против ${corner.x},${corner.y}`);
+
+  // отмена (Esc, уход из окна) снимает рамку, никого не выбрав
+  g.selected.clear();
+  g.beginSelect({ x: x1 - 40, y: y1 - 40 });
+  g.cancelSelect();
+  ok("рамка: отмена снимает её и никого не выделяет",
+    !g.selecting && g.selectStart === null && g.selected.size === 0);
+  g.endSelect({ x: x2 + 40, y: y2 + 40 });
+  ok("рамка: закрытие несуществующей рамки ничего не выделяет", g.selected.size === 0);
+
+  g.beginSelect({ x: x1 - 40, y: y1 - 40 });
+  g.reset(1, 4242);
+  ok("рамка: новая партия начинается без рамки", !g.selecting && g.selectStart === null);
+}
+{
+  // Место подписки — не деталь реализации, а сам баг: mouseup на канвасе не приходит,
+  // если кнопку отпустили не над картой.
+  const html = require("fs").readFileSync(GAME, "utf8");
+  ok("рамка: отпускание слушается на окне, а не на канвасе",
+    !/canvas\.addEventListener\(\s*"mouseup"/.test(html));
 }
 
 // ---------- рельеф и генератор карт ----------
