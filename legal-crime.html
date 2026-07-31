@@ -51,6 +51,29 @@
   .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
   .hint{font-size:11px;color:var(--dim);line-height:1.5;border-top:1px solid var(--line);padding-top:10px}
   .hint b{color:var(--txt)}
+  /* Контекстная панель заведения — висит у самой точки на карте, а не в правом меню:
+     улучшение и снос относятся к КОНКРЕТНОЙ точке, и решаться должны там, где она стоит.
+     Живёт внутри #stage поверх канваса, координаты считает placeBizPanel по w2s. */
+  #bizPanel{position:absolute;left:0;top:0;width:238px;display:none;z-index:4;
+    background:rgba(20,24,32,.97);border:1px solid var(--gold);border-radius:10px;
+    padding:9px;box-shadow:0 12px 28px rgba(0,0,0,.6)}
+  #bizPanel .head{display:flex;align-items:flex-start;gap:6px;margin-bottom:8px}
+  #upSel{flex:1;font-size:11px;color:var(--dim);line-height:1.35}
+  #bizClose{background:none;border:0;color:var(--dim);font-size:15px;line-height:1;
+    cursor:pointer;padding:0 2px}
+  #bizClose:hover{color:var(--txt)}
+  #bizUps{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  /* компактный вариант button.buy: в две колонки у карты, а не в столбик на 280px */
+  button.mini{display:flex;flex-direction:column;align-items:flex-start;gap:3px;
+    background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:7px;padding:7px 8px;cursor:pointer;text-align:left;font-size:12px;transition:.12s}
+  button.mini:hover:not(:disabled){border-color:var(--gold);background:#232a37}
+  button.mini:disabled{opacity:.4;cursor:not-allowed}
+  button.mini .nm{display:flex;align-items:center;gap:5px}
+  button.mini .cost{color:var(--gold);font-weight:700;font-size:11px}
+  #btnDemolish{flex-direction:row;justify-content:space-between;align-items:center;
+    width:100%;margin-top:6px}
+  #bizPanel .note{font-size:10px;color:var(--dim);line-height:1.4;margin-top:7px}
   #msg{position:fixed;left:50%;top:18px;transform:translateX(-50%);
     background:rgba(20,24,32,.92);border:1px solid var(--line);border-radius:8px;
     padding:8px 16px;font-size:14px;pointer-events:none;opacity:0;transition:opacity .3s}
@@ -64,7 +87,41 @@
 </style>
 
 <div id="wrap">
-  <div id="stage"><canvas id="game"></canvas></div>
+  <div id="stage"><canvas id="game"></canvas>
+    <!-- Контекстная панель выбранного заведения: та же DOM-панель, что была справа
+         (те же id, те же ворота), но стоит вплотную к своей точке на карте.
+         Меню на канвасе по-прежнему нет: мир рисуется, покупки — DOM. -->
+    <div id="bizPanel">
+      <div class="head">
+        <div id="upSel">Выбери своё заведение — ЛКМ по нему на карте</div>
+        <button id="bizClose" title="Закрыть — Esc">✕</button>
+      </div>
+      <div id="bizUps">
+        <button class="mini" id="buyUpBar">
+          <span class="nm"><svg class="ik" viewBox="0 0 16 16"><path d="M2.5 2h11l-4.7 6.1V13h2.7v1H4.5v-1h2.7V8.1z"/></svg>Бар</span>
+          <span class="cost" id="costUpBar">$825</span>
+        </button>
+        <button class="mini" id="buyUpStrip">
+          <span class="nm"><svg class="ik" viewBox="0 0 16 16"><path d="M8 14C2.5 10.2 1 7.6 1 5.6 1 3.6 2.5 2.2 4.3 2.2c1.4 0 2.6.8 3.7 2.3 1.1-1.5 2.3-2.3 3.7-2.3C13.5 2.2 15 3.6 15 5.6c0 2-1.5 4.6-7 8.4z"/></svg>Стриптиз</span>
+          <span class="cost" id="costUpStrip">$270</span>
+        </button>
+        <button class="mini" id="buyUpCasino">
+          <span class="nm"><svg class="ik" viewBox="0 0 16 16"><path d="M2 2h12v12H2z"/><circle cx="5" cy="5" r="1.2" fill="#161a22"/><circle cx="11" cy="5" r="1.2" fill="#161a22"/><circle cx="8" cy="8" r="1.2" fill="#161a22"/><circle cx="5" cy="11" r="1.2" fill="#161a22"/><circle cx="11" cy="11" r="1.2" fill="#161a22"/></svg>Казино</span>
+          <span class="cost" id="costUpCasino">$600</span>
+        </button>
+        <button class="mini" id="buyUpFixer">
+          <span class="nm"><svg class="ik" viewBox="0 0 16 16"><path d="M1.5 2.5h11.5v3H7.1v1.6H5.8L4.5 14H2.2L3.6 5.5H1.5z"/></svg>Решала</span>
+          <span class="cost" id="costUpFixer">$600</span>
+        </button>
+      </div>
+      <button class="mini" id="btnDemolish">
+        <span class="nm"><svg class="ik" viewBox="0 0 16 16"><path d="M10.6 1.1l4.3 4.3-2.3 2.3-4.3-4.3zM8.9 5.2l1.9 1.9-7.1 7.1-1.9-1.9z"/></svg>Снести заведение</span>
+        <span class="cost" id="costDemolish">—</span>
+      </button>
+      <div class="note">Одно заведение на точку, штаб не улучшается. Сменить тип — только
+        через снос: вложенное сгорает, новое покупается за полную цену.</div>
+    </div>
+  </div>
   <div id="side">
     <h1>LEGAL CRIME<span>захвати город</span></h1>
     <div class="stat money"><div class="k">Счёт</div><div class="v" id="uiMoney">$0</div></div>
@@ -103,40 +160,11 @@
       Сначала открыт только вышибала.
     </div>
 
-    <div class="grp-title">Улучшить заведение</div>
-    <div id="upSel" style="font-size:11px;color:var(--dim);line-height:1.4">
-      Выбери своё заведение — ЛКМ по нему на карте
-    </div>
-    <button class="buy" id="buyUpBar">
-      <svg class="ik" viewBox="0 0 16 16"><path d="M2.5 2h11l-4.7 6.1V13h2.7v1H4.5v-1h2.7V8.1z"/></svg>
-      <span style="flex:1">Бар<small>бокал · доход сильнее всех растёт с долей рынка</small></span>
-      <span class="cost" id="costUpBar">$825</span>
-    </button>
-    <button class="buy" id="buyUpStrip">
-      <svg class="ik" viewBox="0 0 16 16"><path d="M8 14C2.5 10.2 1 7.6 1 5.6 1 3.6 2.5 2.2 4.3 2.2c1.4 0 2.6.8 3.7 2.3 1.1-1.5 2.3-2.3 3.7-2.3C13.5 2.2 15 3.6 15 5.6c0 2-1.5 4.6-7 8.4z"/></svg>
-      <span style="flex:1">Стриптиз<small>сердце · самый дешёвый вход, доход скромный</small></span>
-      <span class="cost" id="costUpStrip">$270</span>
-    </button>
-    <button class="buy" id="buyUpCasino">
-      <svg class="ik" viewBox="0 0 16 16"><path d="M2 2h12v12H2z"/><circle cx="5" cy="5" r="1.2" fill="#161a22"/><circle cx="11" cy="5" r="1.2" fill="#161a22"/><circle cx="8" cy="8" r="1.2" fill="#161a22"/><circle cx="5" cy="11" r="1.2" fill="#161a22"/><circle cx="11" cy="11" r="1.2" fill="#161a22"/></svg>
-      <span style="flex:1">Казино<small>кубики · высокий базовый доход, рынок помогает вдвое слабее бара</small></span>
-      <span class="cost" id="costUpCasino">$600</span>
-    </button>
-    <button class="buy" id="buyUpFixer">
-      <svg class="ik" viewBox="0 0 16 16"><path d="M1.5 2.5h11.5v3H7.1v1.6H5.8L4.5 14H2.2L3.6 5.5H1.5z"/></svg>
-      <span style="flex:1">Решение проблем<small>пистолет · доля рынка не важна: доход сразу высокий и не растёт</small></span>
-      <span class="cost" id="costUpFixer">$600</span>
-    </button>
-    <button class="buy" id="btnDemolish">
-      <svg class="ik" viewBox="0 0 16 16"><path d="M10.6 1.1l4.3 4.3-2.3 2.3-4.3-4.3zM8.9 5.2l1.9 1.9-7.1 7.1-1.9-1.9z"/></svg>
-      <span style="flex:1">Снести заведение<small>кувалда · точка снова простая; деньги не возвращаются</small></span>
-      <span class="cost" id="costDemolish">—</span>
-    </button>
     <div style="font-size:11px;color:var(--dim);line-height:1.4">
-      Одно заведение на точку; штаб не улучшается. Сменить тип можно только
-      <b style="color:var(--green)">через снос</b> — вложенное сгорает, новое покупается за полную цену.
-      Улучшенная точка берётся дольше, но достаётся захватчику вместе с заведением;
-      снесённая не достаётся никому — и берётся снова быстро.
+      <b style="color:var(--txt)">Улучшение и снос</b> — в панельке у самой точки:
+      кликни ЛКМ по своему заведению на карте. Улучшенная точка берётся дольше,
+      но достаётся захватчику вместе с заведением; снесённая не достаётся никому —
+      и берётся снова быстро.
     </div>
 
     <div class="grp-title">Твой рынок</div>
@@ -157,7 +185,8 @@
       • Опция ниже — прокрутка краями экрана<br><br>
       <b>Управление:</b><br>
       • ЛКМ по бойцу — выбрать (Shift — несколько)<br>
-      • ЛКМ по своему заведению — выбрать его для улучшения<br>
+      • ЛКМ по своему заведению — панелька улучшения прямо у него<br>
+      • <b>Esc</b> — закрыть панельку заведения<br>
       • Рамкой мышью — выделить группу<br>
       • ПКМ по карте — идти<br>
       • ПКМ по бизнесу — маршрут к точке перед его гранью, откуда идёт захват<br>
@@ -809,6 +838,9 @@ let paused=false, selectStart=null, selecting=false;
 let ended=false, outcome=null;             // outcome: "win" | "lose" | null
 const selected=new Set();
 let selBiz=null;                           // выбранное своё заведение — цель кнопок улучшения
+// Выбор меняем ТОЛЬКО через это: контекстная панель висит у точки, и её надо не просто
+// показать/спрятать, но и переставить — на паузе update не идёт, и ждать его нельзя.
+function setSelBiz(b){ selBiz=b; refreshUpgradeUI(); }
 
 // ---------- Ввод ----------
 const keys={};
@@ -816,6 +848,8 @@ addEventListener("keydown",e=>{keys[e.code]=1;
   audioResume();                        // клавиша — такой же жест игрока, как клик
   if(e.code==="Space"){paused=!paused;e.preventDefault();}
   if(e.code==="KeyM") toggleMute();     // общий мьют; галки в панели — по отдельности
+  // Esc закрывает панельку заведения: она стоит поверх карты и своё место занимает
+  if(e.code==="Escape" && selBiz) setSelBiz(null);
   // найм с клавиатуры — боец сразу появляется в штабе; цифра = место класса в BUY_KEYS
   if(/^Digit[1-9]$/.test(e.code)){ const t=BUY_KEYS[+e.code.slice(5)-1]; if(t) selectBuy(t); }
   if(e.code==="KeyH"){   // мгновенно к своему штабу — стандартный хоткей жанра
@@ -856,13 +890,13 @@ canvas.addEventListener("mousedown",e=>{
     if(u){
       if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
       selected.add(u.id);
-      selBiz=null;                       // выбрали бойца — выбор заведения снимается
+      setSelBiz(null);                   // выбрали бойца — выбор заведения снимается
     }else{
       if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
-      // клик по своей точке выбирает её для панели улучшений; чужая или пустое место — сбрасывает.
+      // клик по своей точке открывает панельку у неё же; чужая или пустое место — закрывает.
       // Рамку всё равно заводим: протянуть выделение можно и поверх заведения.
       const bz=pickBiz(w);
-      selBiz = (bz && bz.owner==="player") ? bz : null;
+      setSelBiz((bz && bz.owner==="player") ? bz : null);
       selecting=true; selectStart=w;
     }
   }else if(e.button===2){ // ПКМ — приказ
@@ -893,7 +927,7 @@ canvas.addEventListener("mouseup",e=>{
     if(Math.hypot(x2-x1,y2-y1)>10){
       if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
       units.forEach(u=>{ if(u.team==="player"&&u.x>=x1&&u.x<=x2&&u.y>=y1&&u.y<=y2) selected.add(u.id); });
-      selBiz=null;                       // потянули рамку — значит выбирали бойцов, а не точку
+      setSelBiz(null);                   // потянули рамку — значит выбирали бойцов, а не точку
     }
   }
   selecting=false; selectStart=null;
@@ -1011,9 +1045,43 @@ function refreshBuyUI(){
 function upId(k){ return k[0].toUpperCase()+k.slice(1); }   // bar → Bar, undertaker → Undertaker
 UP_KEYS.forEach(k=>{ document.getElementById("buyUp"+upId(k)).onclick=()=>playerUpgrade(k); });
 document.getElementById("btnDemolish").onclick=()=>playerDemolish();
+document.getElementById("bizClose").onclick=()=>setSelBiz(null);
+// Панель стоит у самой точки, поэтому её место пересчитывается каждый кадр: камера едет,
+// зум меняется — экранные координаты заведения вместе с ними. Считаем через w2s, тем же
+// преобразованием, что и рендер, иначе панель разъедется с плиткой, к которой относится.
+const BIZ_PANEL_W=238, BIZ_PANEL_H=214;   // запасные размеры: offsetWidth в песочнице нет
+// Экранный прямоугольник панели: по нему гасится прокрутка краями — панель стоит НАД картой,
+// и её кнопки у края экрана иначе уезжали бы из-под курсора вместе с камерой.
+let bizRect=null;
+function overBizPanel(s){
+  return !!(bizRect && s && s.x>=bizRect.x && s.x<=bizRect.x+bizRect.w
+                        && s.y>=bizRect.y && s.y<=bizRect.y+bizRect.h);
+}
+function placeBizPanel(b){
+  const el=document.getElementById("bizPanel");
+  const s=w2s(b.x,b.y), pad=8;
+  const wd=el.offsetWidth||BIZ_PANEL_W, ht=el.offsetHeight||BIZ_PANEL_H;
+  const off=TILE*0.5*cam.zoom+12;          // отступ от грани плитки, а не от её центра
+  // по умолчанию справа от точки; не влезло — слева, чтобы панель не накрывала саму точку
+  let x = s.x+off+wd > W-pad ? s.x-off-wd : s.x+off;
+  let y = s.y-ht/2;
+  x=Math.max(pad,Math.min(W-wd-pad,x)); y=Math.max(pad,Math.min(H-ht-pad,y));
+  // миникарта в левом нижнем углу — тоже интерфейс, и она под панелью не кликается:
+  // наехали на неё — поднимаемся выше, а если места нет — уходим правее её края
+  const m=mmRect();
+  if(x<m.x+m.w+11 && y+ht>m.y-11){
+    const up=m.y-11-ht;
+    if(up>=pad) y=up; else x=Math.min(W-wd-pad, m.x+m.w+11);
+  }
+  el.style.left=Math.round(x)+"px"; el.style.top=Math.round(y)+"px";
+  bizRect={x,y,w:wd,h:ht};
+}
 function refreshUpgradeUI(){
   if(selBiz && selBiz.owner!=="player") selBiz=null;         // точку отняли — выбор снят
   const b=selBiz;
+  // нет выбора — панели нет вовсе: она контекстная, висеть пустой ей незачем
+  document.getElementById("bizPanel").style.display = b ? "block" : "none";
+  if(b) placeBizPanel(b); else bizRect=null;
   document.getElementById("upSel").textContent =
     !b     ? "Выбери своё заведение — ЛКМ по нему на карте" :
     b.hq   ? "Штаб «"+b.name+"» — улучшению не подлежит" :
@@ -1431,7 +1499,7 @@ function update(dt){
   // Края экрана — выключены по умолчанию (мешают доступу к панели справа).
   // Если включены, скорость зависит от глубины захода в зону, а не постоянная:
   // у самой кромки быстро, у границы зоны почти незаметно.
-  if(edgeScrollOn && mouseScreen && overCanvas && !drag && !mmDrag){
+  if(edgeScrollOn && mouseScreen && overCanvas && !drag && !mmDrag && !overBizPanel(mouseScreen)){
     const EDGE=45;
     let ex=0, ey=0;
     if(mouseScreen.x<EDGE) ex=-(EDGE-mouseScreen.x)/EDGE;

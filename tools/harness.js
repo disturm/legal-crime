@@ -12,7 +12,8 @@ const BRIDGE = `
   get units(){return units}, get businesses(){return businesses},
   get selected(){return selected}, get cam(){return cam}, get bullets(){return bullets},
   get money(){return funds.player}, set money(v){funds.player=v},   // контракт tools/: g.money — кошелёк игрока
-  get selBiz(){return selBiz}, set selBiz(v){selBiz=v},
+  get selBiz(){return selBiz}, set selBiz(v){selBiz=v}, setSelBiz,
+  w2s, s2w, placeBizPanel, mmRect,
   get ended(){return ended}, get wave(){return wave},
   get outcome(){return outcome}, get factions(){return factions},
   set W(v){W=v}, set H(v){H=v},

@@ -600,6 +600,59 @@ function ok(name, cond, extra) {
   ok("панель: потерянная точка снимает выбор", g.selBiz === null);
 }
 
+// ---------- контекстная панель у самого заведения ----------
+// Улучшение и снос живут не в правом меню, а в панельке, которая стоит вплотную
+// к выбранной точке. Значит, проверять надо не только состояние кнопок, но и место.
+{
+  const g = loadGame();
+  g.reset(1);
+  g.money = 5000; g.update(0.001);
+  const panel = g.els.bizPanel;
+  ok("панелька: без выбора её нет вовсе", panel.style.display === "none");
+  // берём точку поближе к центру мира: камера тогда центрируется на ней без упора в clampCam
+  const cx = g.WORLD_W / 2, cy = g.WORLD_H / 2;
+  let mine = null, md = 1e9;
+  for (const b of g.businesses) {
+    if (b.hq || b.owner !== "neutral") continue;
+    const d = Math.hypot(b.x - cx, b.y - cy);
+    if (d < md) { md = d; mine = b; }
+  }
+  mine.owner = "player";
+  g.cam.zoom = 1; g.cam.x = mine.x - 600; g.cam.y = mine.y - 400;   // точка в центре экрана 1200x800
+  g.selBiz = mine; g.update(0.001);
+  const left = parseFloat(panel.style.left), top = parseFloat(panel.style.top);
+  const s = g.w2s(mine.x, mine.y);
+  ok("панелька: с выбором показана", panel.style.display === "block");
+  // сбоку от плитки (отступ = полклетки на зуме + 12), по вертикали — серединой к точке
+  ok("панелька: стоит вплотную к своей точке",
+    Math.abs(left - (s.x + g.TILE / 2 + 12)) < 2 && Math.abs(top + 107 - s.y) < 4, `${left},${top}`);
+  g.cam.x -= 200; g.update(0.001);
+  ok("панелька: едет вместе с камерой",
+    Math.abs(parseFloat(panel.style.left) - (left + 200)) < 2,
+    `${left} → ${panel.style.left}`);
+  // зум меняет и отступ: панель считается тем же w2s, что и рендер
+  g.cam.zoom = 1.5; g.cam.x = mine.x - 400; g.cam.y = mine.y - 800 / 3; g.update(0.001);
+  const s2 = g.w2s(mine.x, mine.y);
+  ok("панелька: держится точки и на зуме",
+    Math.abs(parseFloat(panel.style.left) - (s2.x + g.TILE / 2 * 1.5 + 12)) < 2, panel.style.left);
+  // у правого края панель уходит на другую сторону: накрывать собой саму точку ей нельзя
+  g.cam.zoom = 1; g.cam.x = mine.x - 1150; g.cam.y = mine.y - 400; g.update(0.001);
+  const s3 = g.w2s(mine.x, mine.y);
+  ok("панелька: у правого края уходит влево от точки",
+    parseFloat(panel.style.left) + 238 <= s3.x - g.TILE / 2, `${panel.style.left} при x=${s3.x}`);
+  // миникарта — тоже интерфейс: под панелью она бы не кликалась
+  g.cam.x = mine.x - 60; g.cam.y = mine.y - 740; g.update(0.001);   // точка в левом нижнем углу
+  const mm = g.mmRect();
+  ok("панелька: миникарту не накрывает",
+    parseFloat(panel.style.top) + 214 <= mm.y - 5 || parseFloat(panel.style.left) > mm.x + mm.w,
+    `${panel.style.left},${panel.style.top} при миникарте ${mm.x},${mm.y}`);
+  // на паузе update не идёт — закрытие и выбор обязаны действовать сразу
+  g.setSelBiz(null);
+  ok("панелька: закрывается сразу, не дожидаясь кадра", panel.style.display === "none");
+  g.setSelBiz(mine);
+  ok("панелька: открывается сразу, не дожидаясь кадра", panel.style.display === "block");
+}
+
 // ---------- рельеф и генератор карт ----------
 // Генератор сидирован, поэтому здесь можно проверять конкретные карты, а не только
 // агрегат: набор сидов фиксирован и любая регрессия генератора его валит.
