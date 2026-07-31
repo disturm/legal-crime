@@ -1,0 +1,60 @@
+# В проекте намеренно нет сборки, зависимостей и пакетного менеджера (см. CLAUDE.md):
+# игра — один самодостаточный HTML, инструменты в tools/ гоняются голым node.
+# Правила ниже — страховка на случай, если кто-то заведёт npm или сборщик,
+# чтобы мусор не уехал в репозиторий вместе с игрой.
+
+# ---------- Node.js ----------
+node_modules/
+jspm_packages/
+.npm/
+.yarn/
+.pnp.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+*.tsbuildinfo
+.node_repl_history
+# package-lock.json / yarn.lock НЕ игнорируем: их место в репозитории
+
+# ---------- Сборка и кэш фронтенда ----------
+dist/
+build/
+out/
+.cache/
+.parcel-cache/
+.vite/
+.next/
+.nuxt/
+.temp/
+.tmp/
+
+# ---------- Тесты и покрытие ----------
+coverage/
+.nyc_output/
+*.lcov
+
+# ---------- Секреты и локальные настройки ----------
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# ---------- Браузер и отладка ----------
+# карты исходников и профили, снятые из devtools
+*.map
+*.cpuprofile
+*.heapprofile
+*.heapsnapshot
+
+# ---------- Редакторы и ОС ----------
+.vscode/
+.idea/
+*.sublime-workspace
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,1099 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Legal Crime — Мини-игра</title>
+<style>
+  :root{
+    --bg:#0d0f14; --panel:#161a22; --panel2:#1e2430; --line:#2c3546;
+    /* --blue/--red совпадают с цветами сторон на карте */
+    --gold:#e8c14a; --green:#4ac97a; --red:#ff5a48; --blue:#48b4ff; --txt:#dfe4ee; --dim:#8b93a4;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,Arial,sans-serif;overflow:hidden;user-select:none}
+  #wrap{display:flex;height:100vh;overflow:hidden}
+  /* канвас позиционируется абсолютно внутри #stage: его атрибуты width/height
+     больше не влияют на раскладку, иначе ResizeObserver уходит в самоусиление */
+  #stage{flex:1 1 auto;min-width:0;position:relative;overflow:hidden}
+  #game{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+  #side{flex:0 0 280px;background:var(--panel);border-left:1px solid var(--line);
+    display:flex;flex-direction:column;padding:14px;gap:12px;overflow-y:auto}
+  h1{font-size:18px;margin:0;letter-spacing:.5px;color:var(--gold)}
+  h1 span{color:var(--dim);font-size:11px;display:block;font-weight:400;letter-spacing:0}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+  .stat .k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+  .stat .v{font-size:22px;font-weight:700}
+  .money .v{color:var(--gold)}
+  .grp-title{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin:2px 0 -4px}
+  button.buy{display:flex;justify-content:space-between;align-items:center;gap:8px;
+    background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:8px;padding:9px 11px;cursor:pointer;text-align:left;font-size:13px;transition:.12s}
+  button.buy:hover{border-color:var(--gold);background:#232a37}
+  button.buy:disabled{opacity:.4;cursor:not-allowed}
+  button.buy .cost{color:var(--gold);font-weight:700;font-size:12px}
+  button.buy small{display:block;color:var(--dim);font-size:10px;margin-top:2px}
+  /* метки классов повторяют силуэты на карте */
+  .mk{width:14px;height:14px;flex:0 0 auto;background:var(--blue)}
+  .mk.circle{border-radius:50%}
+  .mk.square{border-radius:2px}
+  .mk.triangle{background:transparent;width:0;height:0;
+    border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:13px solid var(--blue)}
+  kbd{background:#0e1219;border:1px solid var(--line);border-radius:4px;padding:0 5px;
+    font:600 10px/16px "Segoe UI",sans-serif;color:var(--gold);margin-left:6px;display:inline-block}
+  .opt{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);cursor:pointer;
+    background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 11px}
+  .opt input{accent-color:var(--gold);cursor:pointer}
+  .legend{display:flex;gap:14px;align-items:center;font-size:11px;color:var(--dim)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+  .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+  .hint{font-size:11px;color:var(--dim);line-height:1.5;border-top:1px solid var(--line);padding-top:10px}
+  .hint b{color:var(--txt)}
+  #msg{position:fixed;left:50%;top:18px;transform:translateX(-50%);
+    background:rgba(20,24,32,.92);border:1px solid var(--line);border-radius:8px;
+    padding:8px 16px;font-size:14px;pointer-events:none;opacity:0;transition:opacity .3s}
+  #over{position:fixed;inset:0;display:none;place-items:center;background:rgba(6,8,12,.85);z-index:9}
+  #over .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:34px 40px;text-align:center;max-width:420px}
+  #over h2{margin:0 0 8px;font-size:30px;color:var(--gold)}
+  #over p{color:var(--dim);margin:6px 0 20px;line-height:1.5}
+  #over button{background:var(--gold);border:0;color:#141414;font-weight:700;font-size:15px;
+    padding:11px 26px;border-radius:8px;cursor:pointer}
+</style>
+
+<div id="wrap">
+  <div id="stage"><canvas id="game"></canvas></div>
+  <div id="side">
+    <h1>LEGAL CRIME<span>захвати город</span></h1>
+    <div class="stat money"><div class="k">Счёт</div><div class="v" id="uiMoney">$0</div></div>
+    <div style="display:flex;gap:8px">
+      <div class="stat" style="flex:1"><div class="k">Доход/сек</div><div class="v" id="uiInc" style="color:var(--green)">$0</div></div>
+      <div class="stat" style="flex:1"><div class="k">Бизнесы</div><div class="v" id="uiBiz">0/0</div></div>
+    </div>
+    <div class="stat" style="padding:8px 12px"><div class="k">Расход · бойцы</div><div class="v" id="uiUp" style="font-size:16px">$0 · 0</div></div>
+
+    <div class="legend" id="legend"></div>
+    <div id="standings" style="font-size:11px;color:var(--dim);line-height:1.6"></div>
+
+    <div class="grp-title">Нанять бойца в штабе — клавиши 1 · 2 · 3</div>
+    <button class="buy" id="buyBouncer">
+      <span class="mk circle"></span>
+      <span style="flex:1">Вышибала <kbd>1</kbd><small>круг · дубина · 140 HP · ближний · сила 1 · −$1/с</small></span>
+      <span class="cost" id="costBouncer">$150</span>
+    </button>
+    <button class="buy" id="buyShooter">
+      <span class="mk square"></span>
+      <span style="flex:1">Стрелок <kbd>2</kbd><small>квадрат · пистолет · средняя дистанция · сила 1.5 · −$2/с</small></span>
+      <span class="cost" id="costShooter">взятка $350</span>
+    </button>
+    <button class="buy" id="buySniper">
+      <span class="mk triangle"></span>
+      <span style="flex:1">Снайпер <kbd>3</kbd><small>треугольник · снимает с выстрела, но редко и только зазевавшихся · 55 HP · сила 2.2 · −$3/с</small></span>
+      <span class="cost" id="costSniper">взятка $800</span>
+    </button>
+    <div style="font-size:11px;color:var(--dim);line-height:1.4">
+      Классы открываются <b style="color:var(--green)">взяткой</b> — разовой платой.
+      Сначала открыт только вышибала.
+    </div>
+
+    <label class="opt"><input type="checkbox" id="optEdge"> Прокрутка краями экрана</label>
+
+    <div class="hint">
+      <b>Движение карты:</b><br>
+      • <b>Миникарта</b> внизу слева — клик/тащить, чтобы перейти<br>
+      • <b>WASD</b> или стрелки — плавно двигать карту<br>
+      • <b>Средняя кнопка</b> мыши — тащить карту<br>
+      • <b>Колёсико</b> — зум · <b>H</b> — к своему штабу<br>
+      • Опция ниже — прокрутка краями экрана<br><br>
+      <b>Управление:</b><br>
+      • ЛКМ по бойцу — выбрать (Shift — несколько)<br>
+      • Рамкой мышью — выделить группу<br>
+      • ПКМ по карте — идти<br>
+      • ПКМ по бизнесу — маршрут к точке перед его гранью, откуда идёт захват<br>
+      • ПКМ по врагу — атаковать<br>
+      • Найм: <b>1 2 3</b> или кнопки — сперва взятка, потом боец в штабе<br>
+      • Пробел — пауза<br><br>
+      <b>Цвет</b> — чья сторона, <b>форма</b> — класс бойца.
+      В бизнес не зайти, сквозь дома не стреляют.<br><br>
+      <b>Захват:</b> подойти вплотную к грани заведения (только в лоб, не по диагонали).
+      Тянет точку <b>один самый сильный</b> гангстер — скорость зависит от его силы.
+      Штаб идёт вдвое дольше.<br><br>
+      <b>Боевая стойка</b> — оранжевые скобки у бойца: он сам ведёт бой, и выстрел
+      снайпера по нему проходит вскользь.<br><br>
+      Цель — свалить <b>штабы</b> всех соперников и остаться последним.
+      <b>Свой штаб терять нельзя.</b> Бизнесы дают доход, но бойцы требуют расходов.
+    </div>
+  </div>
+</div>
+<div id="msg"></div>
+<div id="over"><div class="box">
+  <h2 id="ovTitle">LEGAL CRIME</h2>
+  <p id="ovText"></p>
+  <div id="ovStart" style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+    <button id="ovN1">1 противник</button>
+    <button id="ovN2">2 противника</button>
+    <button id="ovN3">3 противника</button>
+  </div>
+  <button id="ovAgain" style="display:none">Заново</button>
+</div></div>
+
+<script>
+"use strict";
+const canvas=document.getElementById("game"), ctx=canvas.getContext("2d");
+const stage=document.getElementById("stage");
+let W=0,H=0;
+function resize(){
+  // меряем контейнер, а не канвас — канвас не должен влиять на собственный размер
+  W=canvas.width=Math.max(1,stage.clientWidth);
+  H=canvas.height=Math.max(1,stage.clientHeight);
+}
+new ResizeObserver(resize).observe(stage); resize();
+
+// ---------- Карта города ----------
+const TILE=64;                 // размер клетки
+const COLS=26, ROWS=20;        // размер города в клетках
+const WORLD_W=COLS*TILE, WORLD_H=ROWS*TILE;
+// grid: 0 = дорога, 1 = здание, 2 = бизнес (в бизнес и здание не зайти)
+const grid=[];
+const blockW=4, blockH=4;      // здания блоками, между ними дороги
+function buildGrid(){
+  grid.length=0;
+  for(let r=0;r<ROWS;r++){ grid[r]=[]; for(let c=0;c<COLS;c++){
+    const road = (r% (blockH+1)===0) || (c%(blockW+1)===0);
+    grid[r][c]= road?0:1;
+  }}
+}
+function cellFree(c,r){ return c>=0&&r>=0&&c<COLS&&r<ROWS && grid[r][c]===0; }
+
+// Раскидываем бизнесы по зданиям
+const BIZ_NAMES=["Бар","Казино","Ломбард","Клуб","Автосервис","Пиццерия","Отель","Банк","Аптека","Кофейня","Салон","Магазин"];
+const businesses=[];
+function nextToRoad(c,r){
+  return (r>0&&grid[r-1][c]===0)||(r<ROWS-1&&grid[r+1][c]===0)||
+         (c>0&&grid[r][c-1]===0)||(c<COLS-1&&grid[r][c+1]===0);
+}
+// Расстановка бизнесов и их владельцев под текущий список фракций.
+function placeBiz(){
+  businesses.length=0;
+  const spots=[];
+  // бизнес всегда на краю квартала — иначе к нему не подойти
+  for(let r=1;r<ROWS-1;r++)for(let c=1;c<COLS-1;c++) if(grid[r][c]===1 && nextToRoad(c,r)) spots.push([c,r]);
+  for(let i=spots.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[spots[i],spots[j]]=[spots[j],spots[i]];}
+  // разносим точки по карте, чтобы не липли друг к другу; плотнее, чем раньше
+  const picked=[];
+  for(const s of spots){
+    if(picked.length>=22) break;
+    if(picked.every(p=>Math.abs(p[0]-s[0])+Math.abs(p[1]-s[1])>=3)) picked.push(s);
+  }
+  // создаём все точки нейтральными
+  for(let i=0;i<picked.length;i++){
+    const [c,r]=picked[i]; grid[r][c]=2;
+    businesses.push({
+      c,r, x:c*TILE+TILE/2, y:r*TILE+TILE/2,
+      name:BIZ_NAMES[i%BIZ_NAMES.length],
+      income: 4+Math.floor(Math.random()*6),   // $/сек
+      owner:"neutral", hq:null,
+      capture:0, capBy:null,                    // 0..100 — прогресс захвата фракцией capBy
+      hp:100
+    });
+  }
+  // ---- штабы: по одному на фракцию, максимально врозь (жадный farthest-point) ----
+  const hqIdx=[];
+  if(businesses.length){
+    hqIdx.push(0);
+    while(hqIdx.length<factions.length && hqIdx.length<businesses.length){
+      let best=-1,bestD=-1;
+      for(let i=0;i<businesses.length;i++){
+        if(hqIdx.includes(i)) continue;
+        let dmin=1e9;
+        hqIdx.forEach(j=>{ const d=Math.hypot(businesses[i].x-businesses[j].x,businesses[i].y-businesses[j].y); if(d<dmin)dmin=d; });
+        if(dmin>bestD){ bestD=dmin; best=i; }
+      }
+      if(best<0) break; hqIdx.push(best);
+    }
+  }
+  factions.forEach((team,k)=>{
+    const b=businesses[hqIdx[k]]; if(!b) return;
+    b.owner=team; b.hq=team; b.income=10;                 // штаб приносит стабильные $10/с
+    // стартовый бизнес рядом со штабом
+    let st=null,sd=1e9;
+    businesses.forEach(o=>{ if(o.owner!=="neutral")return; const d=Math.hypot(o.x-b.x,o.y-b.y); if(d<sd){sd=d;st=o;} });
+    if(st) st.owner=team;
+  });
+}
+
+// ---------- Стороны (фракции) ----------
+// цвет = чья сторона, форма = класс бойца
+const TEAM={
+  player:{main:"#48b4ff", dark:"#0c3757", shot:"#9ad8ff", name:"Ты"},
+  ai1:   {main:"#ff5a48", dark:"#571310", shot:"#ffab9e", name:"Красные"},
+  ai2:   {main:"#b06bff", dark:"#2c1257", shot:"#d9bcff", name:"Фиолетовые"},
+  ai3:   {main:"#e8974a", dark:"#5a3410", shot:"#ffd9ab", name:"Оранжевые"},
+};
+const AI_KEYS=["ai1","ai2","ai3"];
+let factions=["player","ai1"];          // активный список сторон, задаётся в initWorld
+function aiTeams(){ return factions.filter(t=>t!=="player"); }
+function factionHQ(f){ return businesses.find(b=>b.hq===f); }
+function playerHQ(){ return factionHQ("player"); }
+function alive(f){ const hq=factionHQ(f); return !!(hq && hq.owner===f); }   // фракция жива, пока держит штаб
+
+// pow — «сила» гангстера: от неё зависит скорость захвата заведения (тянет один сильнейший).
+// bribe — разовая взятка за открытие класса; вышибала открыт с самого начала.
+const TYPES={
+  bouncer:{name:"Вышибала",shape:"circle", hp:140,speed:70,range:26,dmg:26,rate:0.7,r:12,cost:150,up:1,pow:1,  bribe:0},
+  shooter:{name:"Стрелок", shape:"square", hp:80, speed:82,range:160,dmg:14,rate:0.45,r:10,cost:300,up:2,pow:1.5,bribe:350},
+  sniper:{ name:"Снайпер", shape:"triangle",hp:55, speed:66,range:300,dmg:200,rate:3.6,r:11,cost:550,up:3,pow:2.2,bribe:800},
+};
+// Открытые классы по фракциям: наём возможен только после взятки.
+// Стартовые бойцы выдаются в обход этого — подарок, а не наём.
+const unlocks={};
+function resetUnlocks(){
+  for(const k in unlocks) delete unlocks[k];
+  factions.forEach(f=>unlocks[f]={bouncer:true,shooter:false,sniper:false});
+}
+const AI_BRIBE={shooter:3, sniper:6};   // ИИ «даёт взятку», набрав столько заведений
+let uid=1;
+const units=[]; const bullets=[]; const fx=[];
+function spawnUnit(type,x,y,team,role){
+  const t=TYPES[type];
+  const u={id:uid++,type,team,x,y,tx:x,ty:y,hp:t.hp,maxhp:t.hp,cd:0,target:null,order:null,
+    range:t.range,dmg:t.dmg,rate:t.rate,speed:t.speed,r:t.r,shape:t.shape,pow:t.pow,
+    combat:0,                                  // >0 — боец в боевой стойке (сам ведёт бой)
+    color:TEAM[team].main, dark:TEAM[team].dark, shot:TEAM[team].shot,
+    role:role||"attacker",homeBiz:null};
+  if(team!=="player"){
+    // ИИ: привязываем к ближайшей своей точке — часть остаётся гарнизоном
+    let bb=null,bd=1e9;
+    businesses.forEach(b=>{ if(b.owner!==team)return; const d=Math.hypot(b.x-x,b.y-y); if(d<bd){bd=d;bb=b;} });
+    u.homeBiz=bb;
+    if(!role) u.role = uid%2===0 ? "garrison" : "attacker";
+    if(!bb) u.role="attacker";
+  }
+  units.push(u);
+}
+
+// ---------- Инициализация мира: строится заново при каждой новой партии ----------
+const START_MONEY=360, DEFAULT_AI=2;
+function initWorld(aiCount){
+  aiCount=Math.max(1,Math.min(3,aiCount||1));
+  factions=["player"].concat(AI_KEYS.slice(0,aiCount));
+  buildGrid();
+  placeBiz();
+  resetUnlocks();
+  units.length=0; bullets.length=0; fx.length=0;
+  uid=1; money=START_MONEY; incomePerSec=0;
+  ended=false; outcome=null; paused=false;
+  selected.clear(); selecting=false; selectStart=null;
+  enemyTimer=6; waveTimer=18; wave=0;
+  // стартовый отряд одинаков у всех: ровно 1 вышибала + 1 стрелок у своего штаба.
+  // Ставим их на точку захвата штаба — там гарантированно дорога.
+  factions.forEach(team=>{
+    const hq=factionHQ(team); if(!hq) return;
+    const sp=captureSpots(hq)[0]||{x:hq.x,y:hq.y};
+    spawnUnit("bouncer",sp.x-10,sp.y+6,team,"attacker");
+    spawnUnit("shooter", sp.x+10,sp.y-6,team,"attacker");
+  });
+  const phq=playerHQ();
+  if(phq) centerOn(phq.x,phq.y);
+}
+
+// ---------- Камера ----------
+const cam={x:0, y:0, zoom:1};
+function clampCam(){
+  cam.zoom=Math.max(0.5,Math.min(1.6,cam.zoom));
+  cam.x=Math.max(-100,Math.min(WORLD_W-W/cam.zoom+100,cam.x));
+  cam.y=Math.max(-100,Math.min(WORLD_H-H/cam.zoom+100,cam.y));
+}
+function s2w(sx,sy){ return {x:sx/cam.zoom+cam.x, y:sy/cam.zoom+cam.y}; }
+function w2s(wx,wy){ return {x:(wx-cam.x)*cam.zoom, y:(wy-cam.y)*cam.zoom}; }
+// ЕДИНСТВЕННАЯ точка сдвига камеры: миникарта, WASD, перетаскивание и края
+// зовут её же, иначе способы движения со временем разъезжаются между собой
+function panCamera(dx,dy){ cam.x+=dx; cam.y+=dy; clampCam(); }
+function centerOn(wx,wy){ cam.x=wx-(W/cam.zoom)/2; cam.y=wy-(H/cam.zoom)/2; clampCam(); }
+
+// ---------- Миникарта: основной способ больших перемещений ----------
+function mmRect(){
+  const w=Math.max(90,Math.min(190,W*0.3)), h=w*WORLD_H/WORLD_W;
+  return {x:14, y:H-h-14, w, h};
+}
+function mmHit(sx,sy){ const m=mmRect();
+  return sx>=m.x-5&&sx<=m.x+m.w+5&&sy>=m.y-5&&sy<=m.y+m.h+5; }
+function mmWorld(sx,sy){ const m=mmRect();
+  return {x:(sx-m.x)/m.w*WORLD_W, y:(sy-m.y)/m.h*WORLD_H}; }
+function mmGoTo(sx,sy){ const w=mmWorld(sx,sy); centerOn(w.x,w.y); }
+
+// ---------- Состояние игры ----------
+let money=450, incomePerSec=0, upkeepPerSec=0, paused=false, selectStart=null, selecting=false;
+let ended=false, outcome=null;             // outcome: "win" | "lose" | null
+const selected=new Set();
+
+// ---------- Ввод ----------
+const keys={};
+addEventListener("keydown",e=>{keys[e.code]=1;
+  if(e.code==="Space"){paused=!paused;e.preventDefault();}
+  // найм с клавиатуры — боец сразу появляется в штабе
+  if(e.code==="Digit1") selectBuy("bouncer");
+  if(e.code==="Digit2") selectBuy("shooter");
+  if(e.code==="Digit3") selectBuy("sniper");
+  if(e.code==="KeyH"){   // мгновенно к своему штабу — стандартный хоткей жанра
+    const b=playerHQ()||businesses.find(x=>x.owner==="player");
+    if(b){ centerOn(b.x,b.y); ping(b.x,b.y,TEAM.player.main); }
+    else toast("Своих точек не осталось");
+  }
+});
+addEventListener("keyup",e=>keys[e.code]=0);
+canvas.addEventListener("contextmenu",e=>e.preventDefault());
+canvas.addEventListener("wheel",e=>{
+  const before=evWorld(e);
+  cam.zoom*= e.deltaY<0?1.12:0.9; clampCam();
+  const after=evWorld(e);
+  cam.x+=before.x-after.x; cam.y+=before.y-after.y; clampCam();
+  e.preventDefault();
+},{passive:false});
+
+// координаты события считаем от рамки канваса — единообразно с прокруткой,
+// без зависимости от offsetX
+function evScreen(e){ const r=canvas.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; }
+function evWorld(e){ const s=evScreen(e); return s2w(s.x,s.y); }
+
+canvas.addEventListener("mousedown",e=>{
+  const s=evScreen(e);
+  // миникарта перехватывает клики целиком: ЛКМ — перейти, ПКМ — приказ в ту точку.
+  // Иначе клик проваливался бы в мир, который нарисован под ней
+  if(mmHit(s.x,s.y)){
+    if(e.button===0){ mmDrag=true; mmGoTo(s.x,s.y); }
+    else if(e.button===2){ commandTo(mmWorld(s.x,s.y)); }
+    return;
+  }
+  const w=evWorld(e);
+  if(e.button===0){ // ЛКМ
+    // выбрать бойца под курсором
+    const u=pickUnit(w,"player");
+    if(u){
+      if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
+      selected.add(u.id);
+    }else{
+      if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
+      selecting=true; selectStart=w;
+    }
+  }else if(e.button===2){ // ПКМ — приказ
+    commandTo(w);
+  }
+});
+// курсор слушаем на всём окне: иначе при уходе на панель координата «залипает»
+// и карта продолжает ползти сама по себе
+addEventListener("mousemove",e=>{
+  const r=canvas.getBoundingClientRect();
+  mouseScreen={x:e.clientX-r.left, y:e.clientY-r.top};
+  mouse=s2w(Math.max(0,Math.min(W,mouseScreen.x)), Math.max(0,Math.min(H,mouseScreen.y)));
+  // над панелью прокрутки нет: уход вправо к кнопкам — это намерение нанять,
+  // а не прокрутить карту
+  overCanvas = mouseScreen.x>=0 && mouseScreen.x<=W && mouseScreen.y>=0 && mouseScreen.y<=H;
+  if(mmDrag){ mmGoTo(mouseScreen.x,mouseScreen.y); return; }
+  if(drag){ panCamera(-(e.clientX-drag.x)/cam.zoom, -(e.clientY-drag.y)/cam.zoom);
+            drag={x:e.clientX,y:e.clientY}; }
+});
+addEventListener("mouseout",e=>{ if(!e.relatedTarget) mouseScreen=null; });  // курсор вне окна — стоп
+// перетаскивание карты средней кнопкой — точная альтернатива краям
+addEventListener("mousedown",e=>{ if(e.button===1){ drag={x:e.clientX,y:e.clientY}; e.preventDefault(); } });
+addEventListener("mouseup",  e=>{ if(e.button===1) drag=null; if(e.button===0) mmDrag=false; });
+canvas.addEventListener("mouseup",e=>{
+  if(e.button===0 && selecting){
+    const a=selectStart, b=evWorld(e);
+    const x1=Math.min(a.x,b.x),x2=Math.max(a.x,b.x),y1=Math.min(a.y,b.y),y2=Math.max(a.y,b.y);
+    if(Math.hypot(x2-x1,y2-y1)>10){
+      if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
+      units.forEach(u=>{ if(u.team==="player"&&u.x>=x1&&u.x<=x2&&u.y>=y1&&u.y<=y2) selected.add(u.id); });
+    }
+  }
+  selecting=false; selectStart=null;
+});
+// mouseScreen=null, пока курсор не двигали: иначе стартовые {0,0} сразу тянут карту влево
+let mouse={x:0,y:0}, mouseScreen=null, overCanvas=false, drag=null, mmDrag=false;
+let edgeScrollOn=false;   // прокрутка краями — опция, по умолчанию выключена
+
+function pickUnit(w,team){
+  let best=null,bd=1e9;
+  units.forEach(u=>{ if(team&&u.team!==team)return;
+    const d=Math.hypot(u.x-w.x,u.y-w.y); if(d<u.r+6&&d<bd){bd=d;best=u;} });
+  return best;
+}
+function pickBiz(w){
+  for(const b of businesses){ if(Math.abs(b.x-w.x)<TILE/2&&Math.abs(b.y-w.y)<TILE/2) return b; }
+  return null;
+}
+function commandTo(w){
+  if(selected.size===0) return;
+  const enemy=pickUnit(w,null);
+  const biz=pickBiz(w);
+  // сильнейший идёт первым: захват тянет один гангстер, ему и ближайшая точка
+  const sel=[...selected].map(id=>units.find(u=>u.id===id)).filter(Boolean)
+    .sort((a,b)=>b.pow-a.pow);
+  // клик точно по заведению — маршрут к точке перед его гранью, откуда берётся захват
+  let spots=null;
+  if(biz&&biz.owner!=="player"&&sel.length){
+    spots=captureSpots(biz);
+    const lead=sel[0];
+    spots.sort((p,q)=>Math.hypot(p.x-lead.x,p.y-lead.y)-Math.hypot(q.x-lead.x,q.y-lead.y));
+  }
+  // строй: раскидать вокруг точки
+  sel.forEach((u,i)=>{
+    u.order=null; u.target=null; u.captureBiz=null;
+    if(enemy&&enemy.team!=="player"){ u.target=enemy; u.order="attack"; setDest(u,enemy.x,enemy.y); }
+    else if(spots){ u.captureBiz=biz; u.order="capture";
+      const s=spots.length?spots[i%spots.length]:{x:biz.x,y:biz.y};
+      // сильнейший встаёт ровно в точку, остальные чуть в стороне — не выталкивать его из зоны
+      const j=i?8:0;
+      setDest(u,s.x+(Math.random()*2-1)*j, s.y+(Math.random()*2-1)*j); }
+    else { const a=i/Math.max(1,sel.length)*Math.PI*2, rad=sel.length>1?24+sel.length*3:0;
+      setDest(u,w.x+Math.cos(a)*rad,w.y+Math.sin(a)*rad); }
+  });
+  ping(w.x,w.y, enemy?TEAM[enemy.team].main:biz?"#e8c14a":TEAM.player.main);
+}
+
+// взятка: разовая плата за то, чтобы класс вообще стал доступен к найму
+function tryBribe(type){
+  const t=TYPES[type];
+  if(money<t.bribe){ toast("На взятку за «"+t.name+"» нужно $"+t.bribe); return; }
+  money-=t.bribe; unlocks.player[type]=true;
+  toast("Взятка дана — «"+t.name+"» открыт");
+  refreshBuyUI();
+}
+// наём: боец появляется в штабе игрока, без ручного размещения
+function selectBuy(type){
+  const t=TYPES[type];
+  if(!unlocks.player||!unlocks.player[type]){ tryBribe(type); return; }   // сперва открыть класс
+  if(money<t.cost){ toast("Недостаточно денег"); return; }
+  const hq=playerHQ();
+  if(!hq){ toast("Штаб потерян — нанимать негде"); return; }
+  const p=nearestPassable(hq.c,hq.r);
+  if(!p){ toast("Нет места у штаба"); return; }
+  money-=t.cost;
+  spawnUnit(type, p[0]*TILE+TILE/2+(Math.random()*20-10), p[1]*TILE+TILE/2+(Math.random()*20-10), "player","attacker");
+  refreshBuyUI();
+}
+document.getElementById("optEdge").onchange=e=>{
+  edgeScrollOn=e.target.checked;
+  toast(edgeScrollOn?"Прокрутка краями включена":"Прокрутка краями выключена");
+};
+document.getElementById("buyBouncer").onclick=()=>selectBuy("bouncer");
+document.getElementById("buyShooter").onclick=()=>selectBuy("shooter");
+document.getElementById("buySniper").onclick =()=>selectBuy("sniper");
+function refreshBuyUI(){
+  [["buyBouncer","bouncer"],["buyShooter","shooter"],["buySniper","sniper"]].forEach(([id,t])=>{
+    const el=document.getElementById(id), ty=TYPES[t];
+    const open=!!(unlocks.player&&unlocks.player[t]);
+    const price=open?ty.cost:ty.bribe;
+    const cost=document.getElementById("cost"+id.slice(3));
+    if(cost){ cost.textContent=(open?"$":"взятка $")+price; cost.style.color=open?"var(--gold)":"var(--green)"; }
+    el.disabled=money<price;
+    el.style.borderColor = open?"var(--line)":"var(--green)";
+  });
+}
+
+// ---------- ИИ фракций (каждая воюет за себя) ----------
+let enemyTimer=12, waveTimer=40, wave=0;   // фора игроку на старте
+function enemyAI(dt){
+  enemyTimer-=dt;
+  const retarget = enemyTimer<=0;
+  if(retarget) enemyTimer=2.5;
+  aiTeams().forEach(me=>{
+    if(!retarget) return;
+    // Стартовых гарнизонов больше нет ни у кого, поэтому ИИ сам снимает бойца в охрану штаба:
+    // иначе базу уводит один залётный гангстер, и партии решаются случайностью.
+    const myHQ=factionHQ(me);
+    if(myHQ && myHQ.owner===me){
+      const guards=units.filter(u=>u.team===me&&u.hp>0&&u.role==="garrison"&&u.homeBiz===myHQ).length;
+      const pool=units.filter(u=>u.team===me&&u.hp>0&&u.role==="attacker");
+      if(guards<2 && pool.length>1){
+        let guard=pool[0],gd=1e9;
+        pool.forEach(u=>{const d=Math.hypot(u.x-myHQ.x,u.y-myHQ.y); if(d<gd){gd=d;guard=u;}});
+        guard.role="garrison"; guard.homeBiz=myHQ;
+        guard.order=null; guard.target=null; guard.captureBiz=null;
+      }
+    }
+    // каждый боец без цели идёт к ближайшей чужой точке; враг = любая другая фракция
+    const targets=businesses.filter(b=>b.owner!==me);
+    units.filter(u=>u.team===me&&!u.order).forEach(u=>{
+      // гарнизон стережёт свою точку и не уходит в общий навал
+      if(u.role==="garrison"){
+        if(!u.homeBiz||u.homeBiz.owner!==me){ u.role="attacker"; }   // точку отняли — идём отбивать
+        else{
+          let ne=null,nd=200;
+          units.forEach(p=>{ if(p.team!==me&&p.hp>0){const d=Math.hypot(p.x-u.x,p.y-u.y); if(d<nd){nd=d;ne=p;}}});
+          if(ne){ u.target=ne; u.order="attack"; setDest(u,ne.x,ne.y); return; }
+          // гарнизон встаёт ровно в зону захвата своей точки — только там он мешает её увести
+          const hb=u.homeBiz;
+          if(!inCapZone(hb,u)){
+            const sp=captureSpots(hb);
+            const s=sp.length?sp[u.id%sp.length]:{x:hb.x,y:hb.y};
+            setDest(u,s.x,s.y);
+          }
+          return;
+        }
+      }
+      // атаковать ближайшего чужого в радиусе видимости
+      let ne=null,nd=260;
+      units.forEach(p=>{ if(p.team!==me&&p.hp>0){const d=Math.hypot(p.x-u.x,p.y-u.y); if(d<nd){nd=d;ne=p;}}});
+      if(ne){ u.target=ne; u.order="attack"; setDest(u,ne.x,ne.y); return; }
+      if(targets.length){ let bb=targets[0],bd=1e9;
+        targets.forEach(b=>{const d=Math.hypot(b.x-u.x,b.y-u.y);if(d<bd){bd=d;bb=b;}});
+        u.captureBiz=bb; u.order="capture";
+        // идём не «куда-то к зданию», а в точку перед гранью — только оттуда берётся захват
+        const sp=captureSpots(bb);
+        const s=sp.length?sp[Math.floor(Math.random()*sp.length)]:{x:bb.x,y:bb.y};
+        setDest(u,s.x,s.y);
+      }
+    });
+  });
+  // волны подкреплений: у каждой фракции свой приток, зависящий от её территории
+  waveTimer-=dt;
+  if(waveTimer<=0){
+    wave++; waveTimer=18+Math.random()*8;
+    aiTeams().forEach(me=>{
+      const edge=businesses.filter(b=>b.owner===me);
+      if(!edge.length) return;                     // земли нет — некому платить бойцам
+      // ИИ «даёт взятки» по мере роста территории — те же ворота, что и у игрока
+      if(edge.length>=AI_BRIBE.shooter) unlocks[me].shooter=true;
+      if(edge.length>=AI_BRIBE.sniper)  unlocks[me].sniper=true;
+      // в лимит идут только штурмовики: гарнизоны не должны глушить приток
+      const atk=units.filter(u=>u.team===me&&u.role==="attacker").length;
+      // Свободный член держит лесенку сложности монотонной: он даёт малой фракции
+      // вес независимо от территории, поэтому чем больше ИИ, тем тяжелее.
+      // Убери его — и одинокий ИИ, забравший всю карту, окажется сильнее троих.
+      // Прежняя тройка была ниже стартовых сил ИИ; с отрядом из двух бойцов она
+      // превратилась бы в бесплатную фору, отсюда 2.
+      const cap=2+Math.floor(edge.length*0.75);
+      if(atk>=cap) return;
+      const from=edge[Math.floor(Math.random()*edge.length)];
+      const n=Math.min(3,1+Math.floor(edge.length/3), cap-atk);
+      for(let i=0;i<n;i++){
+        let t="bouncer";                            // закрытые классы ИИ тоже не нанимает
+        if(unlocks[me].sniper&&Math.random()<0.2) t="sniper";
+        else if(unlocks[me].shooter&&Math.random()<0.5) t="shooter";
+        spawnUnit(t,from.x+(Math.random()*60-30),from.y+(Math.random()*60-30),me,"attacker");
+      }
+    });
+  }
+}
+
+// ---------- Навигация: BFS по клеткам ----------
+// проходима только дорога: и дом (1), и бизнес (2) непроходимы — «в бизнес не зайти»
+function passable(c,r){ return c>=0&&r>=0&&c<COLS&&r<ROWS && grid[r][c]===0; }
+// линия огня: сквозь дом/бизнес стрелять нельзя, по дорогам — можно
+function hasLOS(x1,y1,x2,y2){
+  const dx=x2-x1, dy=y2-y1, dist=Math.hypot(dx,dy);
+  const steps=Math.max(1,Math.ceil(dist/(TILE*0.25)));
+  for(let i=1;i<steps;i++){                 // концы (сами юниты на дороге) не проверяем
+    const x=x1+dx*i/steps, y=y1+dy*i/steps;
+    if(!passable(Math.floor(x/TILE),Math.floor(y/TILE))) return false;
+  }
+  return true;
+}
+function nearestPassable(c,r){
+  if(passable(c,r)) return [c,r];
+  for(let rad=1;rad<6;rad++)
+    for(let dr=-rad;dr<=rad;dr++)for(let dc=-rad;dc<=rad;dc++)
+      if(Math.abs(dr)===rad||Math.abs(dc)===rad){
+        if(passable(c+dc,r+dr)) return [c+dc,r+dr];
+      }
+  return null;
+}
+// возвращает массив мировых точек-вейпоинтов
+function findPath(sx,sy,gx,gy){
+  const s=nearestPassable(Math.floor(sx/TILE),Math.floor(sy/TILE));
+  const g=nearestPassable(Math.floor(gx/TILE),Math.floor(gy/TILE));
+  if(!s||!g) return null;
+  if(s[0]===g[0]&&s[1]===g[1]) return [{x:gx,y:gy}];
+  const key=(c,r)=>r*COLS+c;
+  const prev=new Int32Array(COLS*ROWS).fill(-1);
+  const seen=new Uint8Array(COLS*ROWS);
+  const q=[s]; seen[key(s[0],s[1])]=1;
+  const D=[[1,0],[-1,0],[0,1],[0,-1]];
+  let found=false;
+  while(q.length){
+    const [c,r]=q.shift();
+    if(c===g[0]&&r===g[1]){ found=true; break; }
+    for(const [dc,dr] of D){
+      const nc=c+dc, nr=r+dr;
+      if(!passable(nc,nr)) continue;
+      const k=key(nc,nr); if(seen[k]) continue;
+      seen[k]=1; prev[k]=key(c,r); q.push([nc,nr]);
+    }
+  }
+  if(!found) return null;
+  const path=[]; let k=key(g[0],g[1]);
+  while(k!==-1 && k!==key(s[0],s[1])){
+    const c=k%COLS, r=(k-c)/COLS;
+    path.push({x:c*TILE+TILE/2, y:r*TILE+TILE/2});
+    k=prev[k];
+  }
+  path.reverse();
+  if(path.length) path[path.length-1]={x:gx,y:gy};  // финальная точка — точная
+  return path;
+}
+function setDest(u,x,y){
+  u.tx=x; u.ty=y;
+  u.path=findPath(u.x,u.y,x,y); u.pi=0; u.repath=0.5;
+}
+function stop(u){ u.path=null; u.tx=u.x; u.ty=u.y; }
+
+function moveUnit(u,dt){
+  // цель текущего шага
+  let gx=u.tx, gy=u.ty;
+  if(u.path&&u.pi<u.path.length){
+    const wp=u.path[u.pi];
+    if(Math.hypot(wp.x-u.x,wp.y-u.y)<10){ u.pi++; if(u.pi>=u.path.length){ u.path=null; } }
+    else { gx=wp.x; gy=wp.y; }
+  }
+  const dx=gx-u.x, dy=gy-u.y, d=Math.hypot(dx,dy);
+  if(d<2) return;
+  const nx=u.x+dx/d*u.speed*dt, ny=u.y+dy/d*u.speed*dt;
+  // в здание не заходим ни при каких условиях
+  if(passable(Math.floor(nx/TILE),Math.floor(ny/TILE))){
+    u.x=Math.max(6,Math.min(WORLD_W-6,nx));
+    u.y=Math.max(6,Math.min(WORLD_H-6,ny));
+  }else if(u.path){ u.pi++; }   // застряли — к следующему вейпоинту
+  else { setDest(u,u.tx,u.ty); }
+}
+// выталкиваем юнита из стены, если его туда затолкали соседи
+function unstick(u){
+  if(passable(Math.floor(u.x/TILE),Math.floor(u.y/TILE))) return;
+  const p=nearestPassable(Math.floor(u.x/TILE),Math.floor(u.y/TILE));
+  if(p){ u.x=p[0]*TILE+TILE/2; u.y=p[1]*TILE+TILE/2; }
+}
+
+function nearestEnemy(u,maxd){
+  let best=null,bd=Infinity;
+  units.forEach(o=>{ if(o.team===u.team||o.hp<=0)return;
+    const d=Math.hypot(o.x-u.x,o.y-u.y);
+    if(d>=maxd) return;
+    // снайпер целит в того, кто сам не ведёт бой: по бойцу в стойке его выстрел почти бесполезен
+    const score=d+(u.type==="sniper"&&o.combat>0?400:0);
+    if(score<bd && hasLOS(u.x,u.y,o.x,o.y)){bd=score;best=o;} });   // цель за домом не берём автоприцелом
+  return best;
+}
+
+// ---------- Обновление ----------
+const GAME_SPEED=0.75;      // общий темп игры (камера остаётся на реальном dt)
+function update(dt){
+  // прокрутка камеры краями/WASD — на реальном dt, чтобы навигация не тормозила
+  const pan=420*dt/cam.zoom;
+  let kx=0,ky=0;
+  if(keys.KeyW||keys.ArrowUp)ky-=1; if(keys.KeyS||keys.ArrowDown)ky+=1;
+  if(keys.KeyA||keys.ArrowLeft)kx-=1; if(keys.KeyD||keys.ArrowRight)kx+=1;
+  if(kx||ky) panCamera(kx*pan,ky*pan);
+  // Края экрана — выключены по умолчанию (мешают доступу к панели справа).
+  // Если включены, скорость зависит от глубины захода в зону, а не постоянная:
+  // у самой кромки быстро, у границы зоны почти незаметно.
+  if(edgeScrollOn && mouseScreen && overCanvas && !drag && !mmDrag){
+    const EDGE=45;
+    let ex=0, ey=0;
+    if(mouseScreen.x<EDGE) ex=-(EDGE-mouseScreen.x)/EDGE;
+    else if(mouseScreen.x>W-EDGE) ex=(mouseScreen.x-(W-EDGE))/EDGE;
+    if(mouseScreen.y<EDGE) ey=-(EDGE-mouseScreen.y)/EDGE;
+    else if(mouseScreen.y>H-EDGE) ey=(mouseScreen.y-(H-EDGE))/EDGE;
+    if(ex||ey) panCamera(ex*pan,ey*pan);
+  }
+  clampCam();
+
+  dt*=GAME_SPEED;   // отсюда — замедленный игровой мир
+
+  enemyAI(dt);
+
+  // юниты
+  for(const u of units){
+    if(u.hp<=0) continue;
+    u.cd-=dt;
+    if(u.combat>0) u.combat=Math.max(0,u.combat-dt);   // выход из боевой стойки
+    // авто-цель
+    let tgt=u.target && u.target.hp>0 ? u.target : null;
+    if(!tgt){ tgt=nearestEnemy(u, u.order==="attack"?9999:u.range+40); }
+    // приказ выполнен — освобождаем бойца, иначе он застрянет с мёртвой целью
+    if(u.order==="attack" && !tgt){ u.order=null; u.target=null; }
+    if(u.order==="capture" && (!u.captureBiz || u.captureBiz.owner===u.team)){ u.order=null; u.captureBiz=null; }
+    u.repath=(u.repath||0)-dt;
+    if(tgt){
+      const d=Math.hypot(tgt.x-u.x,tgt.y-u.y);
+      // стрелять можно только по прямой видимости — сквозь дома нельзя
+      if(d<=u.range && hasLOS(u.x,u.y,tgt.x,tgt.y)){
+        stop(u);
+        if(u.cd<=0){ fire(u,tgt); u.cd=u.rate; }
+      }else if(u.order==="attack"||u.order===null){
+        if(u.repath<=0) setDest(u,tgt.x,tgt.y);   // цель движется/за домом — обновляем маршрут
+        moveUnit(u,dt);
+      }else{ moveUnit(u,dt); }
+    }else{
+      moveUnit(u,dt);
+    }
+  }
+
+  captureBusinesses(dt);
+
+  // разделение юнитов (чтобы не слипались)
+  for(let i=0;i<units.length;i++){ const a=units[i]; if(a.hp<=0)continue;
+    for(let j=i+1;j<units.length;j++){ const b=units[j]; if(b.hp<=0)continue;
+      const dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy),min=a.r+b.r;
+      if(d>0&&d<min){ const p=(min-d)/2/d; a.x-=dx*p;a.y-=dy*p;b.x+=dx*p;b.y+=dy*p; }
+    }
+  }
+  units.forEach(unstick);
+
+  // пули
+  for(const p of bullets){
+    p.life-=dt; p.x+=p.vx*dt; p.y+=p.vy*dt;
+    if(p.target&&p.target.hp>0){
+      if(Math.hypot(p.target.x-p.x,p.target.y-p.y)<p.target.r+4){
+        p.target.hp-=p.dmg; p.life=0; hit(p.x,p.y,p.color);
+      }
+    }
+  }
+  for(let i=bullets.length-1;i>=0;i--) if(bullets[i].life<=0) bullets.splice(i,1);
+
+  // трупы
+  for(let i=units.length-1;i>=0;i--) if(units[i].hp<=0){ selected.delete(units[i].id); fx.push({x:units[i].x,y:units[i].y,t:0,max:.4,type:"death",color:units[i].color}); units.splice(i,1); }
+
+  // эффекты
+  for(let i=fx.length-1;i>=0;i--){ fx[i].t+=dt; if(fx[i].t>fx[i].max) fx.splice(i,1); }
+
+  // экономика — доход с бизнесов минус содержание бойцов; счёт не уходит в минус
+  incomePerSec=0; upkeepPerSec=0;
+  businesses.forEach(b=>{ if(b.owner==="player") incomePerSec+=b.income; });
+  units.forEach(u=>{ if(u.team==="player") upkeepPerSec+=TYPES[u.type].up; });
+  money=Math.max(0, money+(incomePerSec-upkeepPerSec)*dt);
+
+  updateUI();
+  checkEnd();
+}
+
+// Точки захвата: только дорожные клетки, примыкающие к граням заведения по прямой.
+// Диагоналей нет — подойти можно лишь «в лоб» к одной из четырёх сторон.
+function captureSpots(b){
+  const out=[];
+  for(const [dc,dr] of [[0,-1],[0,1],[-1,0],[1,0]]){
+    const c=b.c+dc, r=b.r+dr;
+    if(passable(c,r)) out.push({x:c*TILE+TILE/2, y:r*TILE+TILE/2});
+  }
+  return out;
+}
+// Зона захвата — узкий крест вплотную к граням: строго напротив стороны заведения
+// и не дальше соседней клетки. По диагонали и «издалека» захвата нет.
+const CAP_LAT=TILE*0.45, CAP_REACH=TILE*1.15;
+function inCapZone(b,u){
+  const dx=Math.abs(u.x-b.x), dy=Math.abs(u.y-b.y);
+  return (dx<CAP_LAT && dy<CAP_REACH) || (dy<CAP_LAT && dx<CAP_REACH);
+}
+// Захват бизнеса — стоя на дороге вплотную к грани (в сам бизнес не зайти).
+// Тянет ровно ОДИН самый сильный гангстер в зоне; скорость — от его силы (pow).
+// Одна шкала capture 0..100 на точку; capBy — кто её сейчас тянет к себе.
+function captureBusinesses(dt){
+  businesses.forEach(b=>{
+    const top={};                     // сильнейший гангстер каждой фракции в зоне
+    for(const u of units){ if(u.hp<=0||!inCapZone(b,u)) continue;
+      if(!top[u.team]||u.pow>top[u.team].pow) top[u.team]=u; }
+    // сильнейший претендент среди чужих фракций
+    let att=null, atTeam=null;
+    for(const t of factions){ if(t===b.owner) continue; const u=top[t];
+      if(u&&(!att||u.pow>att.pow)){ att=u; atTeam=t; } }
+    const defPow = b.owner!=="neutral" && top[b.owner] ? top[b.owner].pow : 0;
+    // тянет один боец, а не толпа, поэтому базовая скорость выше прежней —
+    // иначе партии растягиваются вдвое
+    const rate = b.hq?6:14;                  // штаб захватывается заметно дольше обычной точки
+    if(att){
+      if(b.capBy && b.capBy!==atTeam){       // сменился претендент — сбить чужой прогресс
+        b.capture-=rate*dt; if(b.capture<=0){ b.capture=0; b.capBy=atTeam; }
+      }else{
+        b.capBy=atTeam;
+        const net=att.pow-defPow;            // защитник равной силы держит точку
+        if(net>0) b.capture=Math.min(100,b.capture+rate*net*dt);
+        else { b.capture=Math.max(0,b.capture-rate*dt); if(b.capture<=0) b.capBy=null; }
+      }
+      if(b.capture>=100){
+        const was=b.owner; b.owner=atTeam; b.capture=0; b.capBy=null;
+        if(atTeam==="player"){ money+=120; toast("Захвачен: "+b.name+"  +$120"); ping(b.x,b.y,TEAM.player.main); }
+        else if(was==="player"){ toast("Потерян: "+b.name); ping(b.x,b.y,TEAM[atTeam].main); }
+      }
+    }else if(b.capture>0){                    // никто не оспаривает — прогресс тает
+      b.capture=Math.max(0,b.capture-rate*dt); if(b.capture<=0) b.capBy=null;
+    }
+  });
+}
+
+const COMBAT_TIME=2.2;      // сколько боец держится в боевой стойке после своего выстрела
+const SNIPER_ENGAGED=0.15;  // во столько раз падает урон снайпера по бойцу в стойке
+function fire(u,tgt){
+  const d=Math.hypot(tgt.x-u.x,tgt.y-u.y)||1;
+  u.combat=COMBAT_TIME;                  // сам открыл огонь — значит, в боевой стойке
+  // Снайпер снимает с одного выстрела, но только зазевавшегося: по тому, кто сам
+  // ведёт бой, выстрел проходит вскользь.
+  const dmg = (u.type==="sniper"&&tgt.combat>0) ? Math.round(u.dmg*SNIPER_ENGAGED) : u.dmg;
+  if(u.type==="bouncer"){ // ближний удар — мгновенно
+    tgt.hp-=dmg; hit(tgt.x,tgt.y,u.color); fx.push({x:(u.x+tgt.x)/2,y:(u.y+tgt.y)/2,t:0,max:.12,type:"swing",color:u.color});
+  }else{
+    const sp = u.type==="sniper"?900:520;
+    bullets.push({x:u.x,y:u.y,vx:(tgt.x-u.x)/d*sp,vy:(tgt.y-u.y)/d*sp,dmg,life:d/sp+0.02,target:tgt,color:u.shot});
+    fx.push({x:u.x,y:u.y,t:0,max:.08,type:"muzzle",color:u.shot, ang:Math.atan2(tgt.y-u.y,tgt.x-u.x)});
+  }
+}
+function hit(x,y,c){ fx.push({x,y,t:0,max:.25,type:"hit",color:c}); }
+function ping(x,y,c){ fx.push({x,y,t:0,max:.5,type:"ping",color:c}); }
+
+function checkEnd(){
+  if(ended) return;
+  // поражение — потерян свой штаб
+  if(!alive("player")){ outcome="lose"; endGame(); return; }
+  // победа — остался последней живой фракцией
+  const aliveF=factions.filter(alive);
+  if(aliveF.length===1 && aliveF[0]==="player"){ outcome="win"; endGame(); }
+}
+function endGame(){ if(ended)return; ended=true; paused=true; showOver(outcome==="win"); }
+
+// ---------- Стартовый экран / конец партии ----------
+const over=document.getElementById("over");
+const ovStart=document.getElementById("ovStart"), ovAgain=document.getElementById("ovAgain");
+function showStart(){
+  ended=true; paused=true;
+  document.getElementById("ovTitle").textContent="LEGAL CRIME";
+  document.getElementById("ovText").textContent=
+    "Криминальная FFA: выбери число противников. Каждый воюет за себя — свали чужие штабы и останься последним.";
+  ovStart.style.display="flex"; ovAgain.style.display="none";
+  over.style.display="grid";
+}
+function startGame(n){ initWorld(n); over.style.display="none";
+  toast("Найм в штабе: 1 2 3. Цель — свалить чужие штабы."); }
+function showOver(win){
+  document.getElementById("ovTitle").textContent = win?"ГОРОД ТВОЙ":"ШТАБ ПАЛ";
+  document.getElementById("ovText").textContent = win
+    ? "Ты последний, кто стоит. Город твой. Легально."
+    : "Твой штаб захвачен. Империя рухнула.";
+  ovStart.style.display="none"; ovAgain.style.display="inline-block";
+  over.style.display="grid";
+}
+["1","2","3"].forEach(n=>{ document.getElementById("ovN"+n).onclick=()=>startGame(+n); });
+ovAgain.onclick=showStart;
+
+// ---------- Рендер ----------
+function draw(){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.fillStyle="#0b0d12"; ctx.fillRect(0,0,W,H);
+  ctx.setTransform(cam.zoom,0,0,cam.zoom,-cam.x*cam.zoom,-cam.y*cam.zoom);
+
+  // видимая область в клетках
+  const c0=Math.max(0,Math.floor(cam.x/TILE)), r0=Math.max(0,Math.floor(cam.y/TILE));
+  const c1=Math.min(COLS,Math.ceil((cam.x+W/cam.zoom)/TILE)), r1=Math.min(ROWS,Math.ceil((cam.y+H/cam.zoom)/TILE));
+
+  // асфальт-фон
+  ctx.fillStyle="#20242e";
+  ctx.fillRect(c0*TILE,r0*TILE,(c1-c0)*TILE,(r1-r0)*TILE);
+
+  // клетки
+  for(let r=r0;r<r1;r++)for(let c=c0;c<c1;c++){
+    const x=c*TILE,y=r*TILE,g=grid[r][c];
+    if(g===0){ // дорога
+      ctx.fillStyle="#2b303c"; ctx.fillRect(x,y,TILE,TILE);
+    }else{ // здание
+      ctx.fillStyle="#33404f"; ctx.fillRect(x+3,y+3,TILE-6,TILE-6);
+      ctx.fillStyle="#3c4a5c"; ctx.fillRect(x+3,y+3,TILE-6,6);
+      // окошки
+      ctx.fillStyle="rgba(120,150,180,.18)";
+      for(let wy=0;wy<2;wy++)for(let wx=0;wx<2;wx++) ctx.fillRect(x+12+wx*22,y+16+wy*20,12,12);
+    }
+  }
+  // дорожная разметка
+  ctx.strokeStyle="rgba(232,193,74,.28)"; ctx.lineWidth=2; ctx.setLineDash([10,12]);
+  for(let r=r0;r<=r1;r++) if(r%(blockH+1)===0){ ctx.beginPath(); ctx.moveTo(c0*TILE,r*TILE+TILE/2); ctx.lineTo(c1*TILE,r*TILE+TILE/2); ctx.stroke(); }
+  for(let c=c0;c<=c1;c++) if(c%(blockW+1)===0){ ctx.beginPath(); ctx.moveTo(c*TILE+TILE/2,r0*TILE); ctx.lineTo(c*TILE+TILE/2,r1*TILE); ctx.stroke(); }
+  ctx.setLineDash([]);
+
+  // куда нацелены выделенные бойцы — там подсветим точки, с которых берётся захват
+  const capTargets=new Set();
+  units.forEach(u=>{ if(selected.has(u.id)&&u.captureBiz) capTargets.add(u.captureBiz); });
+
+  // бизнесы
+  businesses.forEach(b=>{
+    const x=b.c*TILE,y=b.r*TILE;
+    if(capTargets.has(b)){   // зона захвата — только в лоб к граням, без диагоналей
+      ctx.strokeStyle="rgba(232,193,74,.75)"; ctx.lineWidth=1.5; ctx.setLineDash([4,4]);
+      captureSpots(b).forEach(s=>ctx.strokeRect(s.x-CAP_LAT,s.y-CAP_LAT,CAP_LAT*2,CAP_LAT*2));
+      ctx.setLineDash([]);
+    }
+    const col = b.owner==="neutral"?"#c9a24a":TEAM[b.owner].main;
+    ctx.fillStyle="#3a4657"; ctx.fillRect(x+3,y+3,TILE-6,TILE-6);
+    ctx.strokeStyle=col; ctx.lineWidth=b.hq?5:3; ctx.strokeRect(x+4,y+4,TILE-8,TILE-8);
+    // маркер-крыша
+    ctx.fillStyle=col; ctx.globalAlpha=.9; ctx.fillRect(x+4,y+4,TILE-8,10); ctx.globalAlpha=1;
+    // $
+    ctx.fillStyle="#0b0d12"; ctx.font="bold 12px Segoe UI"; ctx.textAlign="center";
+    ctx.fillText("$"+b.income, x+TILE/2, y+13);
+    // штаб — звезда и подпись
+    if(b.hq){
+      ctx.fillStyle=col; drawStar(x+TILE/2, y+TILE/2-2, 9, 4.5, 5); ctx.fill();
+      ctx.strokeStyle="#0b0d12"; ctx.lineWidth=1; ctx.stroke();
+      ctx.fillStyle=col; ctx.font="bold 9px Segoe UI"; ctx.fillText("ШТАБ", x+TILE/2, y+TILE-8);
+    }else{
+      ctx.fillStyle="#dfe4ee"; ctx.font="10px Segoe UI"; ctx.fillText(b.name, x+TILE/2, y+TILE-8);
+    }
+    // прогресс захвата (если оспаривается) — цвет претендента
+    if(b.capBy && b.capture>0){
+      ctx.fillStyle="rgba(0,0,0,.5)"; ctx.fillRect(x+8,y+TILE/2-4,TILE-16,6);
+      ctx.fillStyle=TEAM[b.capBy].main; ctx.fillRect(x+8,y+TILE/2-4,(TILE-16)*b.capture/100,6);
+    }
+  });
+
+  // эффект пинга (приказ)
+  fx.forEach(f=>{ if(f.type==="ping"){ const k=f.t/f.max; ctx.strokeStyle=f.color; ctx.globalAlpha=1-k; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(f.x,f.y,6+k*22,0,7); ctx.stroke(); ctx.globalAlpha=1; }});
+
+  // юниты
+  units.forEach(u=>drawUnit(u));
+
+  // пули
+  bullets.forEach(p=>{ ctx.strokeStyle=p.color; ctx.lineWidth= p.dmg>40?2.5:1.5;
+    ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x-p.vx*0.02,p.y-p.vy*0.02); ctx.stroke(); });
+
+  // прочие эффекты
+  fx.forEach(f=>{
+    if(f.type==="hit"){ const k=f.t/f.max; ctx.fillStyle=f.color; ctx.globalAlpha=1-k;
+      for(let i=0;i<4;i++){const a=i*1.6+k;ctx.fillRect(f.x+Math.cos(a)*k*10,f.y+Math.sin(a)*k*10,2,2);} ctx.globalAlpha=1; }
+    if(f.type==="muzzle"){ ctx.fillStyle=f.color; ctx.globalAlpha=1-f.t/f.max;
+      ctx.beginPath(); ctx.arc(f.x+Math.cos(f.ang)*8,f.y+Math.sin(f.ang)*8,4,0,7); ctx.fill(); ctx.globalAlpha=1; }
+    if(f.type==="swing"){ ctx.strokeStyle=f.color; ctx.globalAlpha=1-f.t/f.max; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.arc(f.x,f.y,10,0,7); ctx.stroke(); ctx.globalAlpha=1; }
+    if(f.type==="death"){ const k=f.t/f.max; ctx.fillStyle=f.color; ctx.globalAlpha=(1-k)*.6;
+      ctx.beginPath(); ctx.arc(f.x,f.y,4+k*10,0,7); ctx.fill(); ctx.globalAlpha=1; }
+  });
+
+  // рамка выделения
+  if(selecting&&selectStart){ ctx.strokeStyle="rgba(232,193,74,.9)"; ctx.fillStyle="rgba(232,193,74,.1)"; ctx.lineWidth=1.5/cam.zoom;
+    const a=selectStart,b=mouse; ctx.fillRect(a.x,a.y,b.x-a.x,b.y-a.y); ctx.strokeRect(a.x,a.y,b.x-a.x,b.y-a.y); }
+
+  ctx.setTransform(1,0,0,1,0,0);   // экранные координаты
+  drawMinimap();
+}
+// звезда для отметки штаба
+function drawStar(cx,cy,rOut,rIn,points){
+  ctx.beginPath();
+  for(let i=0;i<points*2;i++){
+    const a=-Math.PI/2 + i*Math.PI/points, r=i%2?rIn:rOut;
+    const px=cx+Math.cos(a)*r, py=cy+Math.sin(a)*r;
+    i?ctx.lineTo(px,py):ctx.moveTo(px,py);
+  }
+  ctx.closePath();
+}
+
+function drawMinimap(){
+  const m=mmRect(), sx=m.w/WORLD_W, sy=m.h/WORLD_H;
+  ctx.fillStyle="rgba(9,12,17,.88)"; ctx.fillRect(m.x-5,m.y-5,m.w+10,m.h+10);
+  ctx.strokeStyle="#2c3546"; ctx.lineWidth=1; ctx.strokeRect(m.x-5.5,m.y-5.5,m.w+11,m.h+11);
+  // кварталы — фоном, чтобы читалась форма города
+  ctx.fillStyle="#242b38";
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++) if(grid[r][c]===1)
+    ctx.fillRect(m.x+c*TILE*sx, m.y+r*TILE*sy, TILE*sx+.5, TILE*sy+.5);
+  // юниты — точками, бизнесы — квадратами поверх
+  units.forEach(u=>{ ctx.fillStyle=u.color; ctx.fillRect(m.x+u.x*sx-1,m.y+u.y*sy-1,2.4,2.4); });
+  businesses.forEach(b=>{
+    ctx.fillStyle=b.owner==="neutral"?"#c9a24a":TEAM[b.owner].main;
+    const s=b.hq?7:5;
+    ctx.fillRect(m.x+b.x*sx-s/2,m.y+b.y*sy-s/2,s,s);
+    ctx.strokeStyle=b.hq?"#fff":"rgba(0,0,0,.6)"; ctx.lineWidth=1; ctx.strokeRect(m.x+b.x*sx-s/2,m.y+b.y*sy-s/2,s,s);
+  });
+  // рамка текущего вида
+  ctx.strokeStyle="#fff"; ctx.lineWidth=1.5;
+  ctx.strokeRect(m.x+cam.x*sx, m.y+cam.y*sy, (W/cam.zoom)*sx, (H/cam.zoom)*sy);
+  ctx.fillStyle="rgba(223,228,238,.55)"; ctx.font="9px Segoe UI"; ctx.textAlign="left";
+  ctx.fillText("клик — перейти", m.x, m.y-9);
+}
+
+// силуэт класса: круг — вышибала, квадрат — стрелок, треугольник — снайпер
+function unitPath(x,y,r,shape,ang){
+  ctx.beginPath();
+  if(shape==="circle"){ ctx.arc(x,y,r,0,7); }
+  else if(shape==="square"){ const s=r*0.92; ctx.rect(x-s,y-s,s*2,s*2); }
+  else { // треугольник смотрит по направлению взгляда
+    for(let i=0;i<3;i++){ const a=ang+i*2.094;
+      const px=x+Math.cos(a)*r*1.25, py=y+Math.sin(a)*r*1.25;
+      i?ctx.lineTo(px,py):ctx.moveTo(px,py); }
+    ctx.closePath();
+  }
+}
+function drawUnit(u){
+  const sel=selected.has(u.id);
+  const ang = u.target? Math.atan2(u.target.y-u.y,u.target.x-u.x)
+            : Math.atan2(u.ty-u.y,u.tx-u.x) || -Math.PI/2;
+  // тень
+  ctx.fillStyle="rgba(0,0,0,.4)"; ctx.beginPath(); ctx.ellipse(u.x,u.y+u.r*0.75,u.r,u.r*0.5,0,0,7); ctx.fill();
+  // кольцо выделения
+  if(sel){ ctx.strokeStyle="#ffffff"; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(u.x,u.y,u.r+6,0,7); ctx.stroke(); }
+  // оружие рисуем ПОД телом, чтобы силуэт читался
+  ctx.strokeStyle=u.dark; ctx.lineCap="round";
+  if(u.type==="sniper"){        // длинный ствол с оптикой
+    ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(u.x,u.y);
+    ctx.lineTo(u.x+Math.cos(ang)*(u.r+14),u.y+Math.sin(ang)*(u.r+14)); ctx.stroke();
+    ctx.fillStyle=u.dark; ctx.beginPath();
+    ctx.arc(u.x+Math.cos(ang)*(u.r+5),u.y+Math.sin(ang)*(u.r+5),2.6,0,7); ctx.fill();
+  }else if(u.type==="shooter"){ // короткий ствол
+    ctx.lineWidth=3.5; ctx.beginPath(); ctx.moveTo(u.x,u.y);
+    ctx.lineTo(u.x+Math.cos(ang)*(u.r+7),u.y+Math.sin(ang)*(u.r+7)); ctx.stroke();
+  }else{                        // дубина — толстая и с набалдашником
+    ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(u.x,u.y);
+    const bx=u.x+Math.cos(ang)*(u.r+6), by=u.y+Math.sin(ang)*(u.r+6);
+    ctx.lineTo(bx,by); ctx.stroke();
+    ctx.fillStyle=u.dark; ctx.beginPath(); ctx.arc(bx,by,3.4,0,7); ctx.fill();
+  }
+  ctx.lineCap="butt";
+  // тело в цвете стороны
+  unitPath(u.x,u.y,u.r,u.shape,ang);
+  ctx.fillStyle=u.color; ctx.fill();
+  ctx.strokeStyle="#0b0d12"; ctx.lineWidth=2; ctx.stroke();
+  // светлое ядро — добавляет объём и отделяет от фона
+  unitPath(u.x,u.y,u.r*0.45,u.shape,ang);
+  ctx.fillStyle="rgba(255,255,255,.35)"; ctx.fill();
+  // боевая стойка — скобки по бокам: по такому бойцу выстрел снайпера почти не проходит
+  if(u.combat>0){ ctx.strokeStyle="rgba(255,176,58,.9)"; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(u.x,u.y,u.r+4,-0.8,0.8); ctx.stroke();
+    ctx.beginPath(); ctx.arc(u.x,u.y,u.r+4,Math.PI-0.8,Math.PI+0.8); ctx.stroke(); }
+  // HP: нейтральный белый, чтобы не путаться с цветами сторон
+  if(u.hp<u.maxhp){ const w=u.r*2.2;
+    ctx.fillStyle="rgba(0,0,0,.65)"; ctx.fillRect(u.x-w/2,u.y-u.r-10,w,4);
+    ctx.fillStyle= u.hp/u.maxhp>.35?"#ffffff":"#ffb03a";
+    ctx.fillRect(u.x-w/2,u.y-u.r-10,w*u.hp/u.maxhp,4); }
+}
+
+// ---------- UI ----------
+function teamLabel(f){ return f==="player"?"Ты":TEAM[f].name; }
+function updateUI(){
+  document.getElementById("uiMoney").textContent="$"+Math.floor(money);
+  const net=incomePerSec-upkeepPerSec;
+  const inc=document.getElementById("uiInc");
+  inc.textContent=(net>=0?"+$":"−$")+Math.abs(net);
+  inc.style.color = net>=0?"var(--green)":"var(--red)";
+  document.getElementById("uiUp").textContent="$"+upkeepPerSec+" · "+units.filter(u=>u.team==="player").length;
+  document.getElementById("uiBiz").textContent=businesses.filter(b=>b.owner==="player").length+"/"+businesses.length;
+  // легенда и табло по активным фракциям
+  document.getElementById("legend").innerHTML =
+    factions.map(f=>`<span><i style="background:${TEAM[f].main}"></i>${teamLabel(f)}${alive(f)?"":" ✝"}</span>`).join("")
+    + `<span><i style="background:#c9a24a"></i>ничьи</span>`;
+  document.getElementById("standings").innerHTML = factions.map(f=>{
+    const n=businesses.filter(b=>b.owner===f).length, u=units.filter(x=>x.team===f).length;
+    return `<div style="color:${TEAM[f].main}">${teamLabel(f)}: ${n} бизн · ${u} бойц${alive(f)?"":" — выбыл"}</div>`;
+  }).join("");
+  refreshBuyUI();
+}
+let msgTimer=0;
+function toast(t){ const m=document.getElementById("msg"); if(!t){m.style.opacity=0;return;} m.textContent=t; m.style.opacity=1; msgTimer=2.2; }
+
+// ---------- Цикл ----------
+let last=performance.now();
+function loop(now){
+  let dt=(now-last)/1000; last=now; dt=Math.min(dt,0.05);
+  if(!paused){ update(dt); }
+  if(msgTimer>0){ msgTimer-=dt; if(msgTimer<=0) document.getElementById("msg").style.opacity=0; }
+  draw();
+  if(paused && !ended){ ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle="rgba(0,0,0,.4)"; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle="#e8c14a"; ctx.font="bold 28px Segoe UI"; ctx.textAlign="center"; ctx.fillText("ПАУЗА",W/2,H/2); }
+  requestAnimationFrame(loop);
+}
+initWorld(DEFAULT_AI);   // мир готов сразу (для тестов), но ждём выбора числа противников
+showStart();
+updateUI();
+requestAnimationFrame(loop);
+</script>
