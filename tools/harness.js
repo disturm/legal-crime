@@ -19,6 +19,7 @@ const BRIDGE = `
   w2s, s2w, s2wClamped, placeBizPanel, mmRect, BIZ_PANEL_W, BIZ_PANEL_H,
   get ended(){return ended}, get wave(){return wave},
   get outcome(){return outcome}, get factions(){return factions},
+  get dead(){return dead}, alive, eliminate, checkEnd,
   set W(v){W=v}, set H(v){H=v},
   // размер карты теперь переменный — только через геттеры, иначе мост запомнит стартовый
   get COLS(){return COLS}, get ROWS(){return ROWS},
