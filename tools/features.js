@@ -1009,6 +1009,63 @@ function ok(name, cond, extra) {
   ok("панелька: открывается сразу, не дожидаясь кадра", panel.style.display === "block");
 }
 
+// ---------- рамка выделения: закрывается, где бы ни отпустили кнопку ----------
+// Раньше конец рамки ловился на канвасе, и отпускание над правым меню, над панелькой
+// заведения или за окном браузера до него не доходило: рамка висела на экране
+// до следующего клика. Обработчики в песочнице не срабатывают, поэтому проверяем
+// сам жизненный цикл (beginSelect/endSelect/cancelSelect) плюс место подписки в HTML.
+{
+  const g = loadGame();
+  g.reset(1, 4242);
+  const mine = g.units.filter(u => u.team === "player");
+  const x1 = Math.min(...mine.map(u => u.x)), x2 = Math.max(...mine.map(u => u.x));
+  const y1 = Math.min(...mine.map(u => u.y)), y2 = Math.max(...mine.map(u => u.y));
+
+  g.beginSelect({ x: x1 - 40, y: y1 - 40 });
+  ok("рамка: пока тянут — она есть", g.selecting === true && g.selectStart !== null);
+  g.endSelect({ x: x2 + 40, y: y2 + 40 });
+  ok("рамка: выделила всех своих внутри", g.selected.size === mine.length,
+    `выделено ${g.selected.size} из ${mine.length}`);
+  ok("рамка: после отпускания её нет", g.selecting === false && g.selectStart === null);
+
+  // кнопку отпустили вне окна — события с координатой нет вообще, конец берётся
+  // из `mouse`: последней позиции, по которой рамку и рисовали
+  g.selected.clear();
+  g.beginSelect({ x: x1 - 40, y: y1 - 40 });
+  g.mouse = { x: x2 + 40, y: y2 + 40 };
+  g.endSelect();
+  ok("рамка: отпускание вне окна закрывает её и выделяет как нарисовано",
+    g.selecting === false && g.selected.size === mine.length,
+    `selecting=${g.selecting}, выделено ${g.selected.size}`);
+
+  // курсор за краем канваса — считаем по краю экрана: рисуется рамка тем же зажимом
+  g.cam.zoom = 1; g.cam.x = x1 - 600; g.cam.y = y1 - 400;
+  const corner = g.s2w(1200, 800), out = g.s2wClamped(4000, 3000);
+  ok("рамка: точка за краем канваса зажимается в его границы",
+    Math.abs(out.x - corner.x) < 1e-6 && Math.abs(out.y - corner.y) < 1e-6,
+    `${out.x},${out.y} против ${corner.x},${corner.y}`);
+
+  // отмена (Esc, уход из окна) снимает рамку, никого не выбрав
+  g.selected.clear();
+  g.beginSelect({ x: x1 - 40, y: y1 - 40 });
+  g.cancelSelect();
+  ok("рамка: отмена снимает её и никого не выделяет",
+    !g.selecting && g.selectStart === null && g.selected.size === 0);
+  g.endSelect({ x: x2 + 40, y: y2 + 40 });
+  ok("рамка: закрытие несуществующей рамки ничего не выделяет", g.selected.size === 0);
+
+  g.beginSelect({ x: x1 - 40, y: y1 - 40 });
+  g.reset(1, 4242);
+  ok("рамка: новая партия начинается без рамки", !g.selecting && g.selectStart === null);
+}
+{
+  // Место подписки — не деталь реализации, а сам баг: mouseup на канвасе не приходит,
+  // если кнопку отпустили не над картой.
+  const html = require("fs").readFileSync(GAME, "utf8");
+  ok("рамка: отпускание слушается на окне, а не на канвасе",
+    !/canvas\.addEventListener\(\s*"mouseup"/.test(html));
+}
+
 // ---------- рельеф и генератор карт ----------
 // Генератор сидирован, поэтому здесь можно проверять конкретные карты, а не только
 // агрегат: набор сидов фиксирован и любая регрессия генератора его валит.
