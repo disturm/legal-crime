@@ -811,9 +811,9 @@ const UP_KEYS=["bar","strip","casino","fixer","gym"];   // порядок кно
 // Рыночные типы — те, что вообще про доход. Выводятся из пометки, а не перечисляются
 // руками: забыть новый тип в одном из списков — обычный способ развести их между собой.
 const MARKET_KEYS=UP_KEYS.filter(k=>!UPGRADES[k].rally);   // строки рынка и выбор ИИ
-// Пол рынка: пока построено меньше 10 заведений типа, доля считается от 10.
+// Пол рынка: пока построено меньше 5 заведений типа, доля считается от 5.
 // Без пола первая же построенная точка давала бы 100%, и формула взрывалась бы на старте.
-const MARKET_MIN=10;
+const MARKET_MIN=5;
 // Рынок — открытая статистика района: размер и доли считаются ПО ФАКТУ, а не по туману.
 // Фогнут не рынок, а владелец конкретной точки.
 function marketCount(f,kind){ let n=0; for(const b of businesses) if(b.kind===kind&&b.owner===f) n++; return n; }
@@ -2773,10 +2773,11 @@ function updateUI(){
   el.style.color = net>=0?"var(--green)":"var(--red)";
   document.getElementById("uiArmy").textContent=""+units.filter(u=>u.team==="player").length;
   document.getElementById("uiBiz").textContent=businesses.filter(b=>b.owner==="player").length+"/"+businesses.length;
-  // Рынок: только СВОЯ доля и размер рынка. Чужие доли — это разведка, а не витрина.
+  // Рынок: своя доля в процентах и число СВОИХ заведений. Общий размер рынка не пишем:
+  // цифра, за которой не стоит ни одного своего решения, только шумит в строке казны.
   document.getElementById("market").innerHTML = MARKET_KEYS.map(k=>
     `<div class="mkt"><div class="k">${UPGRADES[k].name}</div>`+
-    `<div class="v">${marketPct("player",k)}%<small>${marketCount("player",k)} из ${marketSize(k)}</small></div></div>`).join("");
+    `<div class="v">${marketPct("player",k)}%<small>${marketCount("player",k)} шт</small></div></div>`).join("");
   // легенда и табло по активным фракциям
   document.getElementById("legend").innerHTML =
     factions.map(f=>`<span><i style="background:${TEAM[f].main}"></i>${teamLabel(f)}${alive(f)?"":" ✝"}</span>`).join("")

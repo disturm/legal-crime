@@ -428,7 +428,8 @@ function ok(name, cond, extra) {
     g.MARKET_KEYS.map(k => `${k} X=${g.UPGRADES[k].X}`).join(", "));
   ok("рыночные типы выведены из пометки, а не перечислены",
     g.MARKET_KEYS.join() === g.UP_KEYS.filter(k => !g.UPGRADES[k].rally).join());
-  ok("пустой рынок меряется полом 10", g.marketSize("bar") === 10 && g.marketPct("player", "bar") === 0);
+  ok("пол рынка — 5 заведений", g.MARKET_MIN === 5, `MARKET_MIN=${g.MARKET_MIN}`);
+  ok("пустой рынок меряется полом", g.marketSize("bar") === g.MARKET_MIN && g.marketPct("player", "bar") === 0);
 
   // 5 своих баров из 12 построенных: пол больше не действует, доля округляется до целых
   const pool = plain.slice(0, 12);
@@ -743,12 +744,16 @@ function ok(name, cond, extra) {
 {
   // Два стриптиза при доле 20% дают по $24; решение проблем — $36, то есть перевес
   // ×1.5 при пороге AI_SWAP_GAIN. Считаем на явных цифрах, а не на «примерно лучше».
+  // Рынок стриптиза добит чужими точками до 10: пол MARKET_MIN=5 иначе дал бы ИИ
+  // долю 40%, стриптиз стоил бы $28, и перестройка не прошла бы порог — тест мерил бы
+  // пол рынка, а не правило перестройки.
   function world() {
     const g = loadGame();
     g.reset(1);
     g.businesses.forEach(b => { b.kind = null; });
-    g.businesses.filter(b => !b.hq && b.owner !== "player").slice(0, 2)
-      .forEach(b => { b.owner = "ai1"; b.kind = "strip"; });
+    const pool = g.businesses.filter(b => !b.hq && b.owner !== "player").slice(0, 10);
+    pool.slice(0, 2).forEach(b => { b.owner = "ai1"; b.kind = "strip"; });
+    pool.slice(2).forEach(b => { b.owner = "player"; b.kind = "strip"; });
     g.aiFavor.ai1 = "fixer";
     g.funds.ai1 = 5000;
     return g;
@@ -880,12 +885,16 @@ function ok(name, cond, extra) {
   g.selBiz = mine; g.update(0.001);
   ok("панель: своя точка включает кнопки", g.els.buyUpBar.disabled === false);
   // Рынок переехал из правого меню в строку казны сверху, но остаётся тем же #market
-  ok("строка казны: рынок показывает свою долю и размер",
-    /Бар<\/div><div class="v">0%<small>0 из 10</.test(g.els.market.innerHTML), g.els.market.innerHTML);
+  ok("строка казны: рынок показывает свою долю и свои заведения",
+    /Бар<\/div><div class="v">0%<small>0 шт</.test(g.els.market.innerHTML), g.els.market.innerHTML);
   g.playerUpgrade("strip"); g.update(0.001);
   ok("панель: после улучшения кнопки гаснут", g.els.buyUpBar.disabled === true && mine.kind === "strip");
+  // 1 свой стриптиз при пустом рынке — доля считается от пола MARKET_MIN=5, то есть 20%
   ok("строка казны: доля в целых процентах",
-    /Стриптиз<\/div><div class="v">10%<small>1 из 10</.test(g.els.market.innerHTML), g.els.market.innerHTML);
+    /Стриптиз<\/div><div class="v">20%<small>1 шт</.test(g.els.market.innerHTML), g.els.market.innerHTML);
+  // общего размера рынка в строке нет: показываем только своё
+  ok("строка казны: общего размера рынка нет",
+    !/<small>[^<]*из/.test(g.els.market.innerHTML), g.els.market.innerHTML);
   // Снос и улучшение — взаимно исключающие кнопки: включена всегда ровно одна сторона
   ok("панель: после улучшения снос включён и назван",
     g.els.btnDemolish.disabled === false && g.els.costDemolish.textContent === g.UPGRADES.strip.short,
