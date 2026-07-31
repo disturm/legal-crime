@@ -37,6 +37,8 @@
   .mk.square{border-radius:2px}
   .mk.triangle{background:transparent;width:0;height:0;
     border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:13px solid var(--blue)}
+  /* значки типов заведений — те же силуэты, что рисуются на плитке */
+  .ik{width:15px;height:15px;flex:0 0 auto;fill:var(--gold)}
   kbd{background:#0e1219;border:1px solid var(--line);border-radius:4px;padding:0 5px;
     font:600 10px/16px "Segoe UI",sans-serif;color:var(--gold);margin-left:6px;display:inline-block}
   .opt{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);cursor:pointer;
@@ -94,6 +96,38 @@
       Сначала открыт только вышибала.
     </div>
 
+    <div class="grp-title">Улучшить заведение</div>
+    <div id="upSel" style="font-size:11px;color:var(--dim);line-height:1.4">
+      Выбери своё заведение — ЛКМ по нему на карте
+    </div>
+    <button class="buy" id="buyUpBar">
+      <svg class="ik" viewBox="0 0 16 16"><path d="M2.5 2h11l-4.7 6.1V13h2.7v1H4.5v-1h2.7V8.1z"/></svg>
+      <span style="flex:1">Бар<small>бокал · доход сильнее всех растёт с долей рынка</small></span>
+      <span class="cost" id="costUpBar">$825</span>
+    </button>
+    <button class="buy" id="buyUpStrip">
+      <svg class="ik" viewBox="0 0 16 16"><path d="M8 14C2.5 10.2 1 7.6 1 5.6 1 3.6 2.5 2.2 4.3 2.2c1.4 0 2.6.8 3.7 2.3 1.1-1.5 2.3-2.3 3.7-2.3C13.5 2.2 15 3.6 15 5.6c0 2-1.5 4.6-7 8.4z"/></svg>
+      <span style="flex:1">Стриптиз<small>сердце · самый дешёвый вход, доход скромный</small></span>
+      <span class="cost" id="costUpStrip">$270</span>
+    </button>
+    <button class="buy" id="buyUpCasino">
+      <svg class="ik" viewBox="0 0 16 16"><path d="M2 2h12v12H2z"/><circle cx="5" cy="5" r="1.2" fill="#161a22"/><circle cx="11" cy="5" r="1.2" fill="#161a22"/><circle cx="8" cy="8" r="1.2" fill="#161a22"/><circle cx="5" cy="11" r="1.2" fill="#161a22"/><circle cx="11" cy="11" r="1.2" fill="#161a22"/></svg>
+      <span style="flex:1">Казино<small>кубики · высокий базовый доход, рынок помогает вдвое слабее бара</small></span>
+      <span class="cost" id="costUpCasino">$600</span>
+    </button>
+    <button class="buy" id="buyUpFixer">
+      <svg class="ik" viewBox="0 0 16 16"><path d="M1.5 2.5h11.5v3H7.1v1.6H5.8L4.5 14H2.2L3.6 5.5H1.5z"/></svg>
+      <span style="flex:1">Решение проблем<small>пистолет · доля рынка не важна: доход сразу высокий и не растёт</small></span>
+      <span class="cost" id="costUpFixer">$600</span>
+    </button>
+    <div style="font-size:11px;color:var(--dim);line-height:1.4">
+      Улучшение <b style="color:var(--green)">необратимо</b> и одно на точку; штаб не улучшается.
+      Улучшенная точка берётся дольше, но достаётся захватчику вместе с заведением.
+    </div>
+
+    <div class="grp-title">Твой рынок</div>
+    <div id="market" style="font-size:11px;color:var(--dim);line-height:1.6"></div>
+
     <label class="opt"><input type="checkbox" id="optEdge"> Прокрутка краями экрана</label>
 
     <div class="hint">
@@ -105,6 +139,7 @@
       • Опция ниже — прокрутка краями экрана<br><br>
       <b>Управление:</b><br>
       • ЛКМ по бойцу — выбрать (Shift — несколько)<br>
+      • ЛКМ по своему заведению — выбрать его для улучшения<br>
       • Рамкой мышью — выделить группу<br>
       • ПКМ по карте — идти<br>
       • ПКМ по бизнесу — маршрут к точке перед его гранью, откуда идёт захват<br>
@@ -118,6 +153,14 @@
       Штаб идёт вдвое дольше.<br><br>
       <b>Боевая стойка</b> — оранжевые скобки у бойца: он сам ведёт бой, и выстрел
       снайпера по нему проходит вскользь.<br><br>
+
+      <b>Заведения:</b> свою точку (кроме штаба) можно один раз улучшить в бар, стриптиз,
+      казино или решение проблем. Доход зависит от <b>доли рынка</b>: чем больше заведений
+      одного типа у тебя против всех, тем дороже каждое. На плитке написана цена без надбавки
+      за долю — настоящий доход своей точки виден в панели, когда её выбрать.
+      Рынок считается минимум от 10 точек,
+      так что одна первая — только начало. Улучшение необратимо, достаётся тому, кто заберёт
+      заведение, зато и захватывается такая точка дольше.<br><br>
       Цель — свалить <b>штабы</b> всех соперников и остаться последним.
       <b>Свой штаб терять нельзя.</b> Бизнесы дают доход, но бойцы требуют расходов.
     </div>
@@ -189,7 +232,8 @@ function placeBiz(){
     businesses.push({
       c,r, x:c*TILE+TILE/2, y:r*TILE+TILE/2,
       name:BIZ_NAMES[i%BIZ_NAMES.length],
-      income: 4+Math.floor(Math.random()*6),   // $/сек
+      income: 4+Math.floor(Math.random()*6),   // базовый $/сек; у улучшенной точки не используется
+      kind:null,                               // тип заведения после улучшения — ключ UPGRADES
       owner:"neutral", hq:null,
       capture:0, capBy:null,                    // 0..100 — прогресс захвата фракцией capBy
       hp:100
@@ -244,6 +288,59 @@ const TYPES={
   shooter:{name:"Стрелок", shape:"square", hp:80, speed:82,range:160,dmg:14,rate:0.45,r:10,cost:300,up:2,pow:1.5,bribe:350,sight:260},
   sniper:{ name:"Снайпер", shape:"triangle",hp:55, speed:66,range:300,dmg:200,rate:3.6,r:11,cost:550,up:3,pow:2.2,bribe:800,sight:340},
 };
+// ---------- Улучшение заведений и доля рынка ----------
+// Своё заведение (кроме штаба) можно ОДИН раз улучшить — необратимо. Доход улучшения
+// ЗАМЕНЯЕТ базовый и считается как X*(1 + Y*доля), где доля — часть рынка этого типа
+// у владельца. Y=0 — тип, которому рынок безразличен.
+// Все X > 9 (потолок базового дохода), поэтому улучшение всегда выгоднее «как было».
+const UPGRADES={
+  bar:   {name:"Бар",             short:"Бар",      cost:825, X:12, Y:2},
+  strip: {name:"Стриптиз",        short:"Стриптиз", cost:270, X:10, Y:1},
+  casino:{name:"Казино",          short:"Казино",   cost:600, X:15, Y:1},
+  fixer: {name:"Решение проблем", short:"Решала",   cost:600, X:18, Y:0},
+};
+const UP_KEYS=["bar","strip","casino","fixer"];   // порядок кнопок в панели и строк рынка
+// Пол рынка: пока построено меньше 10 заведений типа, доля считается от 10.
+// Без пола первая же построенная точка давала бы 100%, и формула взрывалась бы на старте.
+const MARKET_MIN=10;
+// Рынок — открытая статистика района: размер и доли считаются ПО ФАКТУ, а не по туману.
+// Фогнут не рынок, а владелец конкретной точки.
+function marketCount(f,kind){ let n=0; for(const b of businesses) if(b.kind===kind&&b.owner===f) n++; return n; }
+function marketSize(kind){ let n=0; for(const b of businesses) if(b.kind===kind) n++; return Math.max(MARKET_MIN,n); }
+// доля в ЦЕЛЫХ процентах 0..100 — одно и то же число в кассе и в панели
+function marketPct(f,kind){ return Math.round(marketCount(f,kind)/marketSize(kind)*100); }
+// Доход точки при доле рынка владельца f.
+function bizIncomeOf(f,b){
+  if(!b.kind) return b.income;                       // штаб и неулучшенные — как было
+  const up=UPGRADES[b.kind];
+  return Math.round(up.X*(1+up.Y*marketPct(f,b.kind)/100));
+}
+function bizIncome(b){ return bizIncomeOf(b.owner,b); }
+// Доход «как в прайсе» — при НУЛЕВОЙ доле рынка. Именно он пишется на плитке.
+// Любая цифра, зависящая от живой доли, течёт сквозь туман: она меняется, когда
+// точку у тебя уводят или когда соперник строит своё заведение где-то на другом
+// конце карты. Надбавку за долю видно только в панели, у выбранной своей точки.
+function bizBaseIncome(b){ return b.kind ? UPGRADES[b.kind].X : b.income; }
+// Прогноз дохода типа kind, если фракция f построит ещё add штук: им пользуются
+// и ИИ при выборе типа, и бот в симе.
+function upIncomeAt(f,kind,add){
+  const up=UPGRADES[kind];
+  let n=0,mine=0;
+  for(const b of businesses){ if(b.kind!==kind) continue; n++; if(b.owner===f) mine++; }
+  const pct=Math.round((mine+add)/Math.max(MARKET_MIN,n+add)*100);
+  return Math.round(up.X*(1+up.Y*pct/100));
+}
+// Ворота улучшения — общие для игрока и ИИ, как взятки: своя точка, не штаб, ещё не улучшена.
+function canUpgrade(f,b){ return !!(b && b.owner===f && !b.hq && !b.kind); }
+function buyUpgrade(f,b,kind){
+  const up=UPGRADES[kind];
+  if(!up || !canUpgrade(f,b)) return false;
+  if((funds[f]||0)<up.cost) return false;
+  funds[f]-=up.cost;
+  b.kind=kind;                 // улучшение остаётся на заведении и переходит к захватчику
+  return true;
+}
+
 // Открытые классы по фракциям: наём возможен только после взятки.
 // Стартовые бойцы выдаются в обход этого — подарок, а не наём.
 const unlocks={};
@@ -280,10 +377,12 @@ function initWorld(aiCount){
   buildGrid();
   placeBiz();
   resetUnlocks();
+  resetFunds();                      // кошелёк, доход и расход — на каждую сторону
+  resetAiFavor();                    // любимый тип рынка у каждого ИИ на эту партию
   units.length=0; bullets.length=0; fx.length=0;
-  uid=1; money=START_MONEY; incomePerSec=0;
+  uid=1;
   ended=false; outcome=null; paused=false;
-  selected.clear(); selecting=false; selectStart=null;
+  selected.clear(); selecting=false; selectStart=null; selBiz=null;
   enemyTimer=6; waveTimer=18; wave=0;
   resetFog();                        // туман — под новую карту и новый список сторон
   // стартовый отряд одинаков у всех: ровно 1 вышибала + 1 стрелок у своего штаба.
@@ -325,9 +424,20 @@ function mmWorld(sx,sy){ const m=mmRect();
 function mmGoTo(sx,sy){ const w=mmWorld(sx,sy); centerOn(w.x,w.y); }
 
 // ---------- Состояние игры ----------
-let money=450, incomePerSec=0, upkeepPerSec=0, paused=false, selectStart=null, selecting=false;
+// Кошелёк, доход и расход — у КАЖДОЙ фракции: ИИ покупает улучшения заведений
+// по тем же ценам и через те же ворота, что и игрок. Объекты чистятся «на месте»
+// (как unlocks) — тесты и мост держат их по ссылке.
+const funds={}, fInc={}, fUp={};
+function resetFunds(){
+  for(const k in funds) delete funds[k];
+  for(const k in fInc)  delete fInc[k];
+  for(const k in fUp)   delete fUp[k];
+  factions.forEach(f=>{ funds[f]=START_MONEY; fInc[f]=0; fUp[f]=0; });
+}
+let paused=false, selectStart=null, selecting=false;
 let ended=false, outcome=null;             // outcome: "win" | "lose" | null
 const selected=new Set();
+let selBiz=null;                           // выбранное своё заведение — цель кнопок улучшения
 
 // ---------- Ввод ----------
 const keys={};
@@ -374,8 +484,13 @@ canvas.addEventListener("mousedown",e=>{
     if(u){
       if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
       selected.add(u.id);
+      selBiz=null;                       // выбрали бойца — выбор заведения снимается
     }else{
       if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
+      // клик по своей точке выбирает её для панели улучшений; чужая или пустое место — сбрасывает.
+      // Рамку всё равно заводим: протянуть выделение можно и поверх заведения.
+      const bz=pickBiz(w);
+      selBiz = (bz && bz.owner==="player") ? bz : null;
       selecting=true; selectStart=w;
     }
   }else if(e.button===2){ // ПКМ — приказ
@@ -406,6 +521,7 @@ canvas.addEventListener("mouseup",e=>{
     if(Math.hypot(x2-x1,y2-y1)>10){
       if(!keys.ShiftLeft&&!keys.ShiftRight) selected.clear();
       units.forEach(u=>{ if(u.team==="player"&&u.x>=x1&&u.x<=x2&&u.y>=y1&&u.y<=y2) selected.add(u.id); });
+      selBiz=null;                       // потянули рамку — значит выбирали бойцов, а не точку
     }
   }
   selecting=false; selectStart=null;
@@ -457,8 +573,8 @@ function commandTo(w){
 // взятка: разовая плата за то, чтобы класс вообще стал доступен к найму
 function tryBribe(type){
   const t=TYPES[type];
-  if(money<t.bribe){ toast("На взятку за «"+t.name+"» нужно $"+t.bribe); return; }
-  money-=t.bribe; unlocks.player[type]=true;
+  if(funds.player<t.bribe){ toast("На взятку за «"+t.name+"» нужно $"+t.bribe); return; }
+  funds.player-=t.bribe; unlocks.player[type]=true;
   toast("Взятка дана — «"+t.name+"» открыт");
   refreshBuyUI();
 }
@@ -466,14 +582,27 @@ function tryBribe(type){
 function selectBuy(type){
   const t=TYPES[type];
   if(!unlocks.player||!unlocks.player[type]){ tryBribe(type); return; }   // сперва открыть класс
-  if(money<t.cost){ toast("Недостаточно денег"); return; }
+  if(funds.player<t.cost){ toast("Недостаточно денег"); return; }
   const hq=playerHQ();
   if(!hq){ toast("Штаб потерян — нанимать негде"); return; }
   const p=nearestPassable(hq.c,hq.r);
   if(!p){ toast("Нет места у штаба"); return; }
-  money-=t.cost;
+  funds.player-=t.cost;
   spawnUnit(type, p[0]*TILE+TILE/2+(Math.random()*20-10), p[1]*TILE+TILE/2+(Math.random()*20-10), "player","attacker");
   refreshBuyUI();
+}
+// улучшение по кнопке панели: те же ворота, что у ИИ, плюс подсказки — как в selectBuy
+function playerUpgrade(kind){
+  const b=selBiz, up=UPGRADES[kind];
+  if(!b){ toast("Сначала выбери своё заведение — ЛКМ по нему"); return; }
+  if(b.owner!=="player"){ toast("Это не твоя точка"); return; }
+  if(b.hq){ toast("Штаб улучшить нельзя"); return; }
+  if(b.kind){ toast("Уже улучшено: "+UPGRADES[b.kind].name); return; }
+  if(funds.player<up.cost){ toast("На «"+up.name+"» нужно $"+up.cost); return; }
+  buyUpgrade("player",b,kind);
+  toast(up.name+" открыт — "+b.name+": $"+bizIncomeOf("player",b)+"/с");
+  ping(b.x,b.y,"#e8c14a");
+  refreshUpgradeUI();
 }
 document.getElementById("optEdge").onchange=e=>{
   edgeScrollOn=e.target.checked;
@@ -489,19 +618,74 @@ function refreshBuyUI(){
     const price=open?ty.cost:ty.bribe;
     const cost=document.getElementById("cost"+id.slice(3));
     if(cost){ cost.textContent=(open?"$":"взятка $")+price; cost.style.color=open?"var(--gold)":"var(--green)"; }
-    el.disabled=money<price;
+    el.disabled=funds.player<price;
     el.style.borderColor = open?"var(--line)":"var(--green)";
   });
+}
+function upId(k){ return k[0].toUpperCase()+k.slice(1); }   // bar → Bar, как в id разметки
+UP_KEYS.forEach(k=>{ document.getElementById("buyUp"+upId(k)).onclick=()=>playerUpgrade(k); });
+function refreshUpgradeUI(){
+  if(selBiz && selBiz.owner!=="player") selBiz=null;         // точку отняли — выбор снят
+  const b=selBiz;
+  document.getElementById("upSel").textContent =
+    !b     ? "Выбери своё заведение — ЛКМ по нему на карте" :
+    b.hq   ? "Штаб «"+b.name+"» — улучшению не подлежит" :
+    b.kind ? b.name+" · "+UPGRADES[b.kind].name+" · $"+bizIncomeOf("player",b)+"/с" :
+             b.name+" · сейчас $"+b.income+"/с";
+  UP_KEYS.forEach(k=>{
+    const id="buyUp"+upId(k), el=document.getElementById(id);
+    const cost=document.getElementById("cost"+id.slice(3));   // тот же приём, что в refreshBuyUI
+    if(cost) cost.textContent="$"+UPGRADES[k].cost;
+    el.disabled = !(b && canUpgrade("player",b) && funds.player>=UPGRADES[k].cost);
+  });
+  // Рынок: только СВОЯ доля и размер рынка. Чужие доли — это разведка, а не витрина.
+  document.getElementById("market").innerHTML = UP_KEYS.map(k=>
+    `<div>${UPGRADES[k].name}: <b style="color:var(--txt)">${marketPct("player",k)}%</b> · рынок ${marketSize(k)}</div>`).join("");
 }
 
 // ---------- ИИ фракций (каждая воюет за себя) ----------
 let enemyTimer=12, waveTimer=40, wave=0;   // фора игроку на старте
+// ИИ тратит деньги ТОЛЬКО на улучшения: волны подкреплений остались привязанными
+// к территории (cap), иначе новая экономика сдвинула бы лесенку сложности.
+const AI_UP_RESERVE=150;   // запас в кассе, чтобы содержание бойцов не роняло её в ноль
+const aiFavor={};          // любимый тип рынка на партию — по фракции
+function resetAiFavor(){
+  for(const k in aiFavor) delete aiFavor[k];
+  // Голая жадность по «доход на доллар» вырождается в один тип на всех, и рынок из
+  // четырёх схлопывается. Поэтому у каждой фракции свой любимый тип, а жадность —
+  // только запасной вариант, когда на любимый не хватает.
+  const start=Math.floor(Math.random()*UP_KEYS.length);
+  aiTeams().forEach((f,i)=>{ aiFavor[f]=UP_KEYS[(start+i)%UP_KEYS.length]; });
+}
+function aiUpgrade(me){
+  const cash=funds[me]||0;
+  const own=businesses.filter(b=>canUpgrade(me,b));
+  if(!own.length) return;
+  let kind=null;
+  const fav=aiFavor[me];
+  if(fav && cash>=UPGRADES[fav].cost+AI_UP_RESERVE) kind=fav;
+  else{
+    let bv=-1;
+    for(const k of UP_KEYS){
+      if(cash<UPGRADES[k].cost+AI_UP_RESERVE) continue;
+      const v=upIncomeAt(me,k,1)/UPGRADES[k].cost;
+      if(v>bv){ bv=v; kind=k; }
+    }
+  }
+  if(!kind) return;
+  // вкладываемся в тыл: точка у своего штаба реже переходит из рук в руки
+  const hq=factionHQ(me);
+  let tgt=own[0];
+  if(hq){ let td=1e9; own.forEach(b=>{const d=Math.hypot(b.x-hq.x,b.y-hq.y); if(d<td){td=d;tgt=b;}}); }
+  buyUpgrade(me,tgt,kind);   // те же ворота и та же цена, что у игрока
+}
 function enemyAI(dt){
   enemyTimer-=dt;
   const retarget = enemyTimer<=0;
   if(retarget) enemyTimer=2.5;
   aiTeams().forEach(me=>{
     if(!retarget) return;
+    aiUpgrade(me);          // деньги фракции уходят только сюда
     // Стартовых гарнизонов больше нет ни у кого, поэтому ИИ сам снимает бойца в охрану штаба:
     // иначе базу уводит один залётный гангстер, и партии решаются случайностью.
     const myHQ=factionHQ(me);
@@ -865,11 +1049,7 @@ function update(dt){
   // эффекты
   for(let i=fx.length-1;i>=0;i--){ fx[i].t+=dt; if(fx[i].t>fx[i].max) fx.splice(i,1); }
 
-  // экономика — доход с бизнесов минус содержание бойцов; счёт не уходит в минус
-  incomePerSec=0; upkeepPerSec=0;
-  businesses.forEach(b=>{ if(b.owner==="player") incomePerSec+=b.income; });
-  units.forEach(u=>{ if(u.team==="player") upkeepPerSec+=TYPES[u.type].up; });
-  money=Math.max(0, money+(incomePerSec-upkeepPerSec)*dt);
+  tickEconomy(dt);
 
   updateUI();
   checkEnd();
@@ -888,6 +1068,8 @@ function captureSpots(b){
 // Зона захвата — узкий крест вплотную к граням: строго напротив стороны заведения
 // и не дальше соседней клетки. По диагонали и «издалека» захвата нет.
 const CAP_LAT=TILE*0.45, CAP_REACH=TILE*1.15;
+const CAP_BONUS=120;        // премия за взятое заведение — одинаковая для всех фракций
+const CAP_UPGRADED=0.6;     // во столько раз медленнее берётся улучшенная точка
 function inCapZone(b,u){
   const dx=Math.abs(u.x-b.x), dy=Math.abs(u.y-b.y);
   return (dx<CAP_LAT && dy<CAP_REACH) || (dy<CAP_LAT && dx<CAP_REACH);
@@ -907,7 +1089,8 @@ function captureBusinesses(dt){
     const defPow = b.owner!=="neutral" && top[b.owner] ? top[b.owner].pow : 0;
     // тянет один боец, а не толпа, поэтому базовая скорость выше прежней —
     // иначе партии растягиваются вдвое
-    const rate = b.hq?6:14;                  // штаб захватывается заметно дольше обычной точки
+    // улучшенное заведение держится крепче: это плата за то, что улучшение достаётся захватчику
+    const rate = (b.hq?6:14) * (b.kind?CAP_UPGRADED:1);
     if(att){
       if(b.capBy && b.capBy!==atTeam){       // сменился претендент — сбить чужой прогресс
         b.capture-=rate*dt; if(b.capture<=0){ b.capture=0; b.capBy=atTeam; }
@@ -918,14 +1101,26 @@ function captureBusinesses(dt){
         else { b.capture=Math.max(0,b.capture-rate*dt); if(b.capture<=0) b.capBy=null; }
       }
       if(b.capture>=100){
+        // b.kind НЕ трогаем: улучшение неотделимо от заведения и достаётся захватчику
         const was=b.owner; b.owner=atTeam; b.capture=0; b.capBy=null;
-        if(atTeam==="player"){ money+=120; toast("Захвачен: "+b.name+"  +$120"); ping(b.x,b.y,TEAM.player.main); }
+        if(funds[atTeam]!==undefined) funds[atTeam]+=CAP_BONUS;   // премия за захват — всем по одним правилам
+        if(atTeam==="player"){ toast("Захвачен: "+b.name+"  +$"+CAP_BONUS); ping(b.x,b.y,TEAM.player.main); }
         else if(was==="player"){ toast("Потерян: "+b.name); ping(b.x,b.y,TEAM[atTeam].main); }
       }
     }else if(b.capture>0){                    // никто не оспаривает — прогресс тает
       b.capture=Math.max(0,b.capture-rate*dt); if(b.capture<=0) b.capBy=null;
     }
   });
+}
+
+// Экономика: доход с заведений минус содержание бойцов — по каждой фракции.
+// Ни у кого счёт не уходит в минус. Вынесено из update по образцу captureBusinesses
+// и updateVision: тест обязан уметь прогнать доход без боя и ИИ.
+function tickEconomy(dt){
+  for(const f of factions){ fInc[f]=0; fUp[f]=0; }
+  for(const b of businesses) if(fInc[b.owner]!==undefined) fInc[b.owner]+=bizIncome(b);
+  for(const u of units)      if(fUp[u.team]!==undefined)   fUp[u.team]+=TYPES[u.type].up;
+  for(const f of factions) funds[f]=Math.max(0, funds[f]+(fInc[f]-fUp[f])*dt);
 }
 
 const COMBAT_TIME=2.2;      // сколько боец держится в боевой стойке после своего выстрела
@@ -1031,18 +1226,25 @@ function draw(){
     const col = st.owner==="neutral"?"#c9a24a":TEAM[st.owner].main;
     ctx.fillStyle="#3a4657"; ctx.fillRect(x+3,y+3,TILE-6,TILE-6);
     ctx.strokeStyle=col; ctx.lineWidth=b.hq?5:3; ctx.strokeRect(x+4,y+4,TILE-8,TILE-8);
+    if(b===selBiz){   // выбранная под улучшение точка — белым, как кольцо выделенного бойца
+      ctx.strokeStyle="#ffffff"; ctx.lineWidth=2; ctx.strokeRect(x+1.5,y+1.5,TILE-3,TILE-3);
+    }
     // маркер-крыша
     ctx.fillStyle=col; ctx.globalAlpha=.9; ctx.fillRect(x+4,y+4,TILE-8,10); ctx.globalAlpha=1;
-    // $
+    // $ — доход без доли рынка: цифра статична и потому ничего не выдаёт сквозь туман
     ctx.fillStyle="#0b0d12"; ctx.font="bold 12px Segoe UI"; ctx.textAlign="center";
-    ctx.fillText("$"+b.income, x+TILE/2, y+13);
+    ctx.fillText("$"+bizBaseIncome(b), x+TILE/2, y+13);
     // штаб — звезда и подпись
     if(b.hq){
       ctx.fillStyle=col; drawStar(x+TILE/2, y+TILE/2-2, 9, 4.5, 5); ctx.fill();
       ctx.strokeStyle="#0b0d12"; ctx.lineWidth=1; ctx.stroke();
       ctx.fillStyle=col; ctx.font="bold 9px Segoe UI"; ctx.fillText("ШТАБ", x+TILE/2, y+TILE-8);
     }else{
-      ctx.fillStyle="#dfe4ee"; ctx.font="10px Segoe UI"; ctx.fillText(b.name, x+TILE/2, y+TILE-8);
+      // тип заведения виден сквозь туман: он публичен, как и планировка города.
+      // Читается ТОЛЬКО из настоящего объекта — в снапшоте памяти (st) поля kind нет.
+      if(b.kind) drawKind(b.kind, x+TILE/2, y+TILE/2-2, 18);
+      ctx.fillStyle="#dfe4ee"; ctx.font="10px Segoe UI";
+      ctx.fillText(b.kind?UPGRADES[b.kind].short:b.name, x+TILE/2, y+TILE-8);
     }
     // прогресс захвата (если оспаривается) — цвет претендента
     if(st.capBy && st.capture>0){
@@ -1099,6 +1301,56 @@ function draw(){
 
   ctx.setTransform(1,0,0,1,0,0);   // экранные координаты
   drawMinimap();
+}
+// Иконки типов заведений — всё рисуется кодом, внешних ассетов в проекте нет.
+// (cx,cy) — центр, s — габарит ~16..20 px. Цвет общий золотой, а не цвет стороны:
+// принадлежность уже несут крыша и рамка плитки, а тип обязан читаться одинаково у всех.
+function drawKind(kind,cx,cy,s){
+  ctx.save();
+  ctx.fillStyle="#e8c14a"; ctx.strokeStyle="#0b0d12"; ctx.lineWidth=1.2; ctx.lineJoin="round";
+  if(kind==="bar")         drawGlass(cx,cy,s);
+  else if(kind==="strip")  drawHeart(cx,cy,s);
+  else if(kind==="casino") drawDice(cx,cy,s);
+  else if(kind==="fixer")  drawGun(cx,cy,s);
+  ctx.restore();
+}
+// бокал: перевёрнутый треугольник чаши, ножка, подставка, оливка на кромке
+function drawGlass(cx,cy,s){
+  const w=s*0.36, top=cy-s*0.34;
+  ctx.beginPath(); ctx.moveTo(cx-w,top); ctx.lineTo(cx+w,top); ctx.lineTo(cx,cy+s*0.06);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle="#e8c14a"; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(cx,cy+s*0.02); ctx.lineTo(cx,cy+s*0.34); ctx.stroke();               // ножка
+  ctx.beginPath(); ctx.moveTo(cx-w*0.6,cy+s*0.36); ctx.lineTo(cx+w*0.6,cy+s*0.36); ctx.stroke();   // подставка
+  ctx.fillStyle="#0b0d12";                                                                          // оливка
+  ctx.beginPath(); ctx.arc(cx+w*0.45,top+s*0.07,s*0.08,0,7); ctx.fill();
+}
+// сердце: две безье-доли и остриё вниз — при 16 px читается лучше склейки дуг
+function drawHeart(cx,cy,s){
+  ctx.beginPath();
+  ctx.moveTo(cx,cy+s*0.42);
+  ctx.bezierCurveTo(cx-s*0.72,cy-s*0.06, cx-s*0.40,cy-s*0.58, cx,cy-s*0.16);
+  ctx.bezierCurveTo(cx+s*0.40,cy-s*0.58, cx+s*0.72,cy-s*0.06, cx,cy+s*0.42);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+}
+// кубик: квадрат с лёгким наклоном и пятёрка точек — пятёрка узнаётся мгновенно
+function drawDice(cx,cy,s){
+  const a=s*0.66, p=a*0.27, d=s*0.07;
+  ctx.save();
+  ctx.translate(cx,cy); ctx.rotate(-0.16);
+  ctx.beginPath(); ctx.rect(-a/2,-a/2,a,a); ctx.fill(); ctx.stroke();   // roundRect не берём: есть не везде
+  ctx.fillStyle="#0b0d12";
+  [[-1,-1],[1,-1],[0,0],[-1,1],[1,1]].forEach(([px,py])=>{
+    ctx.beginPath(); ctx.arc(px*p,py*p,d,0,7); ctx.fill(); });
+  ctx.restore();
+}
+// пистолет: силуэт одной ломаной — затвор со стволом вправо, скоба, рукоять вниз-назад
+function drawGun(cx,cy,s){
+  const u=s*0.1, x=cx-s*0.46, y=cy-s*0.30;
+  const P=[[0,0],[10,0],[10,2.6],[4.6,2.6],[4.6,4.2],[3.4,4.2],[2.2,9.2],[0.2,9.2],[1.4,2.6],[0,2.6]];
+  ctx.beginPath();
+  P.forEach(([px,py],i)=> i?ctx.lineTo(x+px*u,y+py*u):ctx.moveTo(x+px*u,y+py*u));
+  ctx.closePath(); ctx.fill(); ctx.stroke();
 }
 // звезда для отметки штаба
 function drawStar(cx,cy,rOut,rIn,points){
@@ -1202,12 +1454,12 @@ function drawUnit(u){
 // ---------- UI ----------
 function teamLabel(f){ return f==="player"?"Ты":TEAM[f].name; }
 function updateUI(){
-  document.getElementById("uiMoney").textContent="$"+Math.floor(money);
-  const net=incomePerSec-upkeepPerSec;
+  document.getElementById("uiMoney").textContent="$"+Math.floor(funds.player);
+  const net=fInc.player-fUp.player;
   const inc=document.getElementById("uiInc");
   inc.textContent=(net>=0?"+$":"−$")+Math.abs(net);
   inc.style.color = net>=0?"var(--green)":"var(--red)";
-  document.getElementById("uiUp").textContent="$"+upkeepPerSec+" · "+units.filter(u=>u.team==="player").length;
+  document.getElementById("uiUp").textContent="$"+fUp.player+" · "+units.filter(u=>u.team==="player").length;
   document.getElementById("uiBiz").textContent=businesses.filter(b=>b.owner==="player").length+"/"+businesses.length;
   // легенда и табло по активным фракциям
   document.getElementById("legend").innerHTML =
@@ -1218,6 +1470,7 @@ function updateUI(){
     return `<div style="color:${TEAM[f].main}">${teamLabel(f)}: ${n} бизн · ${u} бойц${alive(f)?"":" — выбыл"}</div>`;
   }).join("");
   refreshBuyUI();
+  refreshUpgradeUI();
 }
 let msgTimer=0;
 function toast(t){ const m=document.getElementById("msg"); if(!t){m.style.opacity=0;return;} m.textContent=t; m.style.opacity=1; msgTimer=2.2; }

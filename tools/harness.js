@@ -11,15 +11,20 @@ const BRIDGE = `
 ;var api = {
   get units(){return units}, get businesses(){return businesses},
   get selected(){return selected}, get cam(){return cam}, get bullets(){return bullets},
-  get money(){return money}, set money(v){money=v},
+  get money(){return funds.player}, set money(v){funds.player=v},   // контракт tools/: g.money — кошелёк игрока
+  get selBiz(){return selBiz}, set selBiz(v){selBiz=v},
   get ended(){return ended}, get wave(){return wave},
   get outcome(){return outcome}, get factions(){return factions},
   set W(v){W=v}, set H(v){H=v},
   TYPES, TEAM, grid, TILE, COLS, ROWS, unlocks,
   update, draw, setDest, spawnUnit, passable, findPath,
   hasLOS, reset: initWorld, playerHQ, factionHQ,
-  selectBuy, captureSpots, inCapZone, captureBusinesses, fire, commandTo,
-  vis, canSee, knownOwner, bizView, updateVision, visFrom
+  selectBuy, captureSpots, inCapZone, captureBusinesses, fire, commandTo, pickBiz,
+  vis, canSee, knownOwner, bizView, updateVision, visFrom,
+  funds, fInc, fUp, tickEconomy,
+  UPGRADES, UP_KEYS, MARKET_MIN, aiFavor, CAP_UPGRADED,
+  marketCount, marketSize, marketPct, bizIncome, bizIncomeOf, bizBaseIncome, upIncomeAt,
+  canUpgrade, buyUpgrade, playerUpgrade, aiUpgrade
 };`;
 
 function stubCtx() {

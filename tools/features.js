@@ -214,5 +214,152 @@ function ok(name, cond, extra) {
     g.businesses.every(b => b.memo && g.factions.every(f => b.memo[f])));
 }
 
+// ---------- рынок заведений: пол в 10 точек, доля в целых процентах ----------
+{
+  const g = loadGame();
+  g.reset(2);
+  const plain = g.businesses.filter(b => !b.hq);
+  ok("базовый доход остался 4..9", plain.every(b => b.income >= 4 && b.income <= 9));
+  ok("на старте никто не улучшен", g.businesses.every(b => b.kind === null));
+  ok("улучшение всегда выгоднее базы: X > 9 у всех типов",
+    g.UP_KEYS.every(k => g.UPGRADES[k].X > 9), g.UP_KEYS.map(k => `${k} X=${g.UPGRADES[k].X}`).join(", "));
+  ok("пустой рынок меряется полом 10", g.marketSize("bar") === 10 && g.marketPct("player", "bar") === 0);
+
+  // 5 своих баров из 12 построенных: пол больше не действует, доля округляется до целых
+  const pool = plain.slice(0, 12);
+  pool.forEach((b, i) => { b.kind = "bar"; b.owner = i < 5 ? "player" : "ai1"; });
+  ok("рынок больше пола меряется числом заведений", g.marketSize("bar") === 12);
+  ok("доля округляется до целых процентов", g.marketPct("player", "bar") === 42,
+    `доля ${g.marketPct("player", "bar")}%`);                       // 5/12 = 41.67
+  ok("доход бара по формуле X*(1+Y*доля)", g.bizIncomeOf("player", pool[0]) === 22,
+    `${g.bizIncomeOf("player", pool[0])} вместо 22`);               // 12*(1+2*0.42)
+  pool[0].kind = "fixer";
+  ok("решение проблем не зависит от рынка", g.bizIncomeOf("player", pool[0]) === g.UPGRADES.fixer.X);
+  pool[0].kind = "bar";
+  // доля считается по факту, а не по памяти: неразведанная чужая точка всё равно в рынке
+  const dark = pool.find(b => b.owner === "ai1" && g.knownOwner("player", b) !== "ai1");
+  ok("рынок считается по факту, не по туману", !!dark && g.marketSize("bar") === 12);
+  // на плитке — цена «как в прайсе»: цифра, зависящая от живой доли, текла бы сквозь туман
+  ok("на плитке доход без доли рынка", g.bizBaseIncome(pool[0]) === g.UPGRADES.bar.X &&
+    g.bizIncome(pool[0]) > g.bizBaseIncome(pool[0]),
+    `плитка ${g.bizBaseIncome(pool[0])}, по факту ${g.bizIncome(pool[0])}`);
+  const shown = g.bizBaseIncome(pool[0]);
+  pool[0].owner = "ai1";                                            // точку увели
+  ok("цифра на плитке не меняется при смене владельца", g.bizBaseIncome(pool[0]) === shown);
+  pool[0].owner = "player";
+  const plainBiz = g.businesses.find(b => !b.hq && !b.kind);
+  ok("у неулучшенной точки на плитке базовый доход", g.bizBaseIncome(plainBiz) === plainBiz.income);
+}
+
+// ---------- ворота улучшения: своя точка, не штаб, один раз, за деньги ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  const hq = g.playerHQ();
+  const mine = g.businesses.find(b => b.owner === "player" && !b.hq);
+  const foreign = g.businesses.find(b => b.owner !== "player");
+  g.money = 5000;
+  ok("штаб не улучшается", !g.canUpgrade("player", hq) && !g.buyUpgrade("player", hq, "bar") && hq.kind === null);
+  ok("штаб по-прежнему даёт $10/с", hq.income === 10 && g.bizIncomeOf("player", hq) === 10);
+  ok("чужую точку не улучшить", !g.buyUpgrade("player", foreign, "bar") && foreign.kind === null);
+  ok("покупка списывает ровно цену", g.buyUpgrade("player", mine, "casino") &&
+    mine.kind === "casino" && Math.round(g.money) === 5000 - g.UPGRADES.casino.cost,
+    `kind=${mine.kind}, деньги ${Math.round(g.money)}`);
+  const after = g.money;
+  ok("улучшение необратимо", !g.buyUpgrade("player", mine, "bar") && mine.kind === "casino" && g.money === after);
+  const two = g.businesses.find(b => b.owner === "player" && !b.hq && !b.kind);
+  g.money = 50;
+  ok("без денег улучшения нет", !two || (!g.buyUpgrade("player", two, "strip") && two.kind === null));
+}
+
+// ---------- экономика: свой кошелёк у каждой фракции, счёт не уходит в минус ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  g.units.length = 0;                                       // содержание никого не ест
+  g.businesses.forEach(b => { if (b.owner === "player" && !b.hq) b.owner = "neutral"; });
+  const hq = g.playerHQ();
+  g.money = 0;
+  g.tickEconomy(1);
+  ok("один штаб даёт ровно $10 за секунду", Math.round(g.money) === 10, `$${g.money}`);
+  ok("у ИИ есть свой кошелёк и свой доход", g.funds.ai1 > 0 && g.fInc.ai1 > 0,
+    `funds ${Math.round(g.funds.ai1)}, доход ${g.fInc.ai1}`);
+  g.money = 0;
+  g.spawnUnit("sniper", hq.x, hq.y, "player");
+  for (let i = 0; i < 40; i++) g.tickEconomy(0.5);
+  ok("счёт не уходит в минус", g.money >= 0, `$${g.money}`);
+  // доход растёт с долей рынка: тот же бизнес при своей монополии дороже
+  const b = g.businesses.find(x => !x.hq);
+  b.owner = "player"; b.kind = "bar";
+  const one = g.bizIncome(b);
+  g.businesses.filter(x => !x.hq && !x.kind).slice(0, 9).forEach(x => { x.owner = "player"; x.kind = "bar"; });
+  ok("доля рынка поднимает доход бара", g.bizIncome(b) > one,
+    `1 бар ${one}, 10 баров ${g.bizIncome(b)}`);
+}
+
+// ---------- улучшенная точка: берётся дольше и достаётся захватчику ----------
+{
+  function grabTime(kind) {
+    const g = loadGame();
+    g.reset(1);
+    const b = g.businesses.find(x => x.owner === "neutral" && g.captureSpots(x).length);
+    b.kind = kind;                                   // ничья точка с уже готовым заведением
+    const s = g.captureSpots(b)[0];
+    g.spawnUnit("bouncer", s.x, s.y, "player");
+    let t = 0;
+    while (b.owner !== "player" && t < 120) { g.captureBusinesses(0.05); t += 0.05; }
+    return { t, kind: b.kind, cap: g.CAP_UPGRADED };
+  }
+  const plain = grabTime(null), up = grabTime("bar");
+  const exp = 1 / up.cap;
+  ok("улучшенная точка захватывается медленнее", up.t > plain.t * (exp - 0.15) && up.t < plain.t * (exp + 0.15),
+    `обычная ${plain.t.toFixed(1)}с, улучшенная ${up.t.toFixed(1)}с, ожидалось ×${exp.toFixed(2)}`);
+  ok("улучшение переходит к захватчику вместе с точкой", up.kind === "bar");
+}
+
+// ---------- ИИ улучшает по тем же правилам и из своего кошелька ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  let b = g.businesses.find(x => x.owner === "ai1" && !x.hq);
+  if (!b) { b = g.businesses.find(x => x.owner === "neutral"); b.owner = "ai1"; }
+  g.funds.ai1 = 5000;
+  g.aiUpgrade("ai1");
+  const bought = g.businesses.find(x => x.owner === "ai1" && x.kind);
+  ok("ИИ улучшает свою точку и платит из своего кошелька",
+    !!bought && g.funds.ai1 === 5000 - g.UPGRADES[bought.kind].cost,
+    `kind=${bought && bought.kind}, касса ${g.funds.ai1}`);
+  ok("ИИ не улучшает штаб", g.factionHQ("ai1").kind === null);
+  const c = g.businesses.find(x => x.owner === "ai1" && !x.hq && !x.kind);
+  g.funds.ai1 = 50;
+  g.aiUpgrade("ai1");
+  ok("без денег ИИ не улучшает", !c || c.kind === null);
+}
+
+// ---------- панель улучшений ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  g.money = 5000; g.update(0.001);
+  ok("панель: без выбора кнопки улучшений выключены", g.els.buyUpBar.disabled === true);
+  ok("панель: цена улучшения на месте", g.els.costUpBar.textContent === "$" + g.UPGRADES.bar.cost,
+    g.els.costUpBar.textContent);
+  g.selBiz = g.playerHQ(); g.update(0.001);
+  ok("панель: штаб улучшать не даёт",
+    g.els.buyUpBar.disabled === true && /Штаб/.test(g.els.upSel.textContent), g.els.upSel.textContent);
+  const mine = g.businesses.find(b => b.owner === "player" && !b.hq);
+  g.selBiz = mine; g.update(0.001);
+  ok("панель: своя точка включает кнопки", g.els.buyUpBar.disabled === false);
+  ok("панель: рынок показывает свою долю и размер",
+    /Бар: <b[^>]*>0%<\/b> · рынок 10/.test(g.els.market.innerHTML), g.els.market.innerHTML);
+  g.playerUpgrade("strip"); g.update(0.001);
+  ok("панель: после улучшения кнопки гаснут", g.els.buyUpBar.disabled === true && mine.kind === "strip");
+  ok("панель: доля в целых процентах",
+    /Стриптиз: <b[^>]*>10%<\/b> · рынок 10/.test(g.els.market.innerHTML), g.els.market.innerHTML);
+  // потеря точки снимает выбор сама, без отдельного хука в захвате
+  mine.owner = "ai1"; g.update(0.001);
+  ok("панель: потерянная точка снимает выбор", g.selBiz === null);
+}
+
 console.log(fails ? `\nПРОВАЛЕНО проверок: ${fails}` : "\nвсе проверки пройдены");
 process.exit(fails ? 1 : 0);

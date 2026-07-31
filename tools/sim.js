@@ -9,9 +9,15 @@
 // одиночный прогон ничего не доказывает, гоняйте N >= 20.
 const { loadGame } = require("./harness");
 
+const UP_RESERVE = 400;   // сколько бот держит в кассе на найм, покупая улучшение
+const UP_FLOOR = 700;     // ниже этой суммы бот в экономику не вкладывается
+
 function play(g, mode, aiCount) {
   g.reset(aiCount);                          // новый мир с нужным числом ИИ-противников
   let t = 0, peakEnemy = 0;
+  // Как и ИИ, бот специализируется на одном типе рынка: доля растёт только у того,
+  // кто держит фокус, а голая жадность по «доход на доллар» сводит все партии к стриптизу.
+  const fav = g.UP_KEYS[Math.floor(Math.random() * g.UP_KEYS.length)];
   for (let i = 0; i < 12000 && !g.ended; i++) {
     g.update(0.05); t += 0.05;
     peakEnemy = Math.max(peakEnemy, g.units.filter(u => u.team !== "player").length);
@@ -25,6 +31,23 @@ function play(g, mode, aiCount) {
     // Дешёвое ядро, дорогие классы — когда экономика позволяет.
     const ty = g.money >= 900 ? "sniper" : g.money >= 400 ? "shooter" : "bouncer";
     g.selectBuy(ty);
+
+    // Улучшения — часть нормальной игры, поэтому модель обязана ими пользоваться:
+    // иначе sim меряет не сложность, а «игрок не знает про механику».
+    if (mode === "mass" && g.money >= UP_FLOOR) {
+      const plain = mine.filter(b => !b.hq && !b.kind);
+      let kind = null, bv = -1;
+      g.UP_KEYS.forEach(k => {
+        if (g.money < g.UPGRADES[k].cost + UP_RESERVE) return;
+        const v = g.upIncomeAt("player", k, 1) / g.UPGRADES[k].cost + (k === fav ? 0.02 : 0);
+        if (v > bv) { bv = v; kind = k; }
+      });
+      if (plain.length && kind) {              // вкладываемся в тыл: ближняя к штабу точка живёт дольше
+        let tgt = plain[0], td = 1e9;
+        plain.forEach(b => { const d = Math.hypot(b.x - h.x, b.y - h.y); if (d < td) { td = d; tgt = b; } });
+        g.buyUpgrade("player", tgt, kind);
+      }
+    }
 
     const my = g.units.filter(u => u.team === "player");
     const free = my.filter(u => !u.captureBiz || u.captureBiz.owner === "player");
@@ -94,6 +117,10 @@ function play(g, mode, aiCount) {
     mine: g.businesses.filter(b => b.owner === "player").length, total: g.businesses.length,
     players: g.units.filter(u => u.team === "player").length,
     peakEnemy, wave: g.wave, money: Math.round(g.money),
+    inc: Math.round(g.fInc.player),                                          // доход/с к концу партии
+    up: g.businesses.filter(b => b.owner === "player" && b.kind).length,     // своих улучшенных
+    aiUp: g.businesses.filter(b => b.owner !== "player" && b.kind).length,   // улучшенных у соперников
+    share: g.UP_KEYS.map(k => g.marketPct("player", k)).join("/"),           // доли по типам
   };
 }
 
