@@ -33,11 +33,12 @@ const BRIDGE = `
   update, draw, setDest, spawnUnit, passable, findPath,
   hasLOS, reset: initWorld, playerHQ, factionHQ,
   selectBuy, captureSpots, inCapZone, captureBusinesses, fire, commandTo, pickBiz,
-  vis, canSee, knownOwner, bizView, updateVision, visFrom,
+  vis, canSee, knownOwner, bizView, updateVision, visFrom, SIGHT_BIZ, SIGHT_HQ,
   funds, fInc, fUp, tickEconomy,
   UPGRADES, UP_KEYS, MARKET_MIN, aiFavor, CAP_UPGRADED,
   marketCount, marketSize, marketPct, bizIncome, bizIncomeOf, bizBaseIncome, upIncomeAt,
   canUpgrade, buyUpgrade, playerUpgrade, aiUpgrade,
+  canDemolish, demolish, playerDemolish, aiSwap, AI_SWAP_GAIN,
   get musicOn(){return musicOn}, get sfxOn(){return sfxOn},
   get actx(){return actx},   // в тесте им двигают currentTime: бюджет голосов и планировщик считают по нему
   SHOTS, sfx, setAudio, toggleMute, audioInit, audioResume, audioDuck,
@@ -99,7 +100,7 @@ function audioStub(log) {
   };
 }
 
-// В игре размер карты по умолчанию `large` — на нём играют и на нём сняты замеры баланса.
+// В игре размер карты по умолчанию `normal` (а замеры баланса сняты на `large`).
 // В tools/ по умолчанию МАЛЕНЬКАЯ карта: тесты гоняют десятки миров подряд, а update
 // квадратичен по юнитам, и большая карта делает прогон дорогим по реальному времени.
 // Кому нужен конкретный размер — передаёт его третьим аргументом g.reset (так делает

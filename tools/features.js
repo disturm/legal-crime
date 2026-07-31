@@ -21,6 +21,10 @@ function ok(name, cond, extra) {
       `всего ${mine.length}, вышибал ${by("bouncer")}, стрелков ${by("shooter")}`);
     const hq = g.factionHQ(f);
     ok(`${f}: штаб даёт $10/с`, hq && hq.income === 10, hq && `income=${hq.income}`);
+    // на старте у фракции нет ничего, кроме штаба: все прочие точки надо брать самому
+    const own = g.businesses.filter(b => b.owner === f);
+    ok(`${f}: владеет только штабом`, own.length === 1 && own[0] === hq,
+      `точек ${own.length}: ` + own.map(b => b.name + (b.hq ? " (штаб)" : "")).join(", "));
   });
 }
 
@@ -266,10 +270,26 @@ function ok(name, cond, extra) {
   ok("дом без выхода на дорогу не виден", !deep || !g.canSee("player", deep[0] * T + T / 2, deep[1] * T + T / 2),
     deep ? `клетка ${deep}` : "такого дома рядом не нашлось");
 
+  // Своя точка — это свои люди на месте: обзор не хуже живого стрелка и во все стороны,
+  // то есть со всех подходов, а не с одного случайного соседа непроходимой клетки.
+  ok("заведение видит не хуже стрелка", g.SIGHT_BIZ >= g.TYPES.shooter.sight && g.SIGHT_HQ >= g.SIGHT_BIZ,
+    `точка ${g.SIGHT_BIZ}, штаб ${g.SIGHT_HQ}, стрелок ${g.TYPES.shooter.sight}`);
   // чужие бойцы на старте — за туманом
   const far = g.units.filter(x => x.team !== "player");
   ok("чужие бойцы на старте не видны", far.every(p => !g.canSee("player", p.x, p.y)),
     `видно ${far.filter(p => g.canSee("player", p.x, p.y)).length} из ${far.length}`);
+
+  // На старте у фракции только штаб, поэтому чужую не-штабную точку заводим руками:
+  // ИИ забрал ближайшую к себе, а игрок этого не видел — ровно тот случай, что проверяем.
+  const aiHQ = g.factionHQ("ai1");
+  let grabbed = null, gd = 1e9;
+  g.businesses.forEach(b => {
+    if (b.owner !== "neutral" || b.hq) return;
+    const d = Math.hypot(b.x - aiHQ.x, b.y - aiHQ.y);
+    if (d < gd) { gd = d; grabbed = b; }
+  });
+  if (grabbed) grabbed.owner = "ai1";
+  g.updateVision(1);                               // память обновляется только по видимому
 
   // чужие точки считаются нейтральными, пока их не разведали; штабы — исключение
   const enemyBiz = g.businesses.filter(b => b.owner !== "player" && b.owner !== "neutral" && !b.hq);
@@ -287,6 +307,43 @@ function ok(name, cond, extra) {
     g.updateVision(1);
     ok("разведанная точка показывает настоящего владельца",
       g.knownOwner("player", spy) === spy.owner, `память ${g.knownOwner("player", spy)}, факт ${spy.owner}`);
+  }
+}
+
+// ---------- своя точка светит во все стороны, а не в одну сторону ----------
+// Заведение стоит в непроходимой клетке: обзор из его центра ушёл бы в ОДИН соседний
+// проходимый тайл (nearestPassable), и дальняя грань дома осталась бы в тумане.
+// Требование — видны все подходы к своей точке, те же captureSpots, что и у захвата.
+{
+  const g = loadGame();
+  g.reset(2, 1007);                                 // сид: карта воспроизводима, подходы известны
+  const far = g.businesses.filter(b => !b.hq && g.captureSpots(b).length >= 2
+    && g.units.every(u => Math.hypot(u.x - b.x, u.y - b.y) > 600));
+  const b = far[0];
+  const seen = () => { let n = 0; const v = g.vis.player; for (let i = 0; i < v.length; i++) n += v[i]; return n; };
+  if (!b) { ok("нашлась точка с двумя подходами вдали от бойцов", false); }
+  else {
+    const sp = g.captureSpots(b);
+    g.updateVision(1);
+    const base = seen();
+    ok("ничья точка обзора не даёт", sp.every(s => !g.canSee("player", s.x, s.y)));
+
+    b.owner = "player";                             // как будто её только что захватили
+    g.updateVision(1);
+    const withBiz = seen() - base;
+    const dark = sp.filter(s => !g.canSee("player", s.x, s.y));
+    ok("свою точку видно со всех подходов", dark.length === 0,
+      `подходов ${sp.length}, тёмных ${dark.length}`);
+
+    // «не хуже стрелка»: точка открывает не меньше клеток, чем живой стрелок,
+    // поставленный на один из её же подходов
+    b.owner = "neutral";
+    g.updateVision(1);
+    g.spawnUnit("shooter", sp[0].x, sp[0].y, "player");
+    g.updateVision(1);
+    const withMan = seen() - base;
+    ok("точка видит не меньше стрелка на её пороге", withBiz >= withMan,
+      `точка открыла ${withBiz} клеток, стрелок ${withMan}`);
   }
 }
 
@@ -345,7 +402,9 @@ function ok(name, cond, extra) {
   const g = loadGame();
   g.reset(1);
   const hq = g.playerHQ();
-  const mine = g.businesses.find(b => b.owner === "player" && !b.hq);
+  // улучшать нечего, пока не захватишь: на старте у игрока один штаб
+  const mine = g.businesses.find(b => b.owner === "neutral" && !b.hq);
+  if (mine) mine.owner = "player";
   const foreign = g.businesses.find(b => b.owner !== "player");
   g.money = 5000;
   ok("штаб не улучшается", !g.canUpgrade("player", hq) && !g.buyUpgrade("player", hq, "bar") && hq.kind === null);
@@ -356,9 +415,39 @@ function ok(name, cond, extra) {
     `kind=${mine.kind}, деньги ${Math.round(g.money)}`);
   const after = g.money;
   ok("улучшение необратимо", !g.buyUpgrade("player", mine, "bar") && mine.kind === "casino" && g.money === after);
-  const two = g.businesses.find(b => b.owner === "player" && !b.hq && !b.kind);
+  const two = g.businesses.find(b => b.owner === "neutral" && !b.hq && !b.kind);
+  if (two) two.owner = "player";
   g.money = 50;
   ok("без денег улучшения нет", !two || (!g.buyUpgrade("player", two, "strip") && two.kind === null));
+}
+
+// ---------- снос: единственный способ сменить тип, и он ничего не возвращает ----------
+{
+  const g = loadGame();
+  g.reset(1);
+  const hq = g.playerHQ();
+  // на старте у игрока один штаб, поэтому точку под снос сперва забираем
+  const mine = g.businesses.find(b => b.owner === "neutral" && !b.hq);
+  mine.owner = "player";
+  const foreign = g.businesses.find(b => b.owner === "neutral" && !b.hq && b !== mine);
+  foreign.owner = "ai1";                     // именно чужое, а не ничьё
+  g.money = 5000;
+  ok("простую точку сносить нечего", !g.canDemolish("player", mine) && !g.demolish("player", mine));
+  g.buyUpgrade("player", mine, "casino");
+  foreign.kind = "bar";
+  ok("штаб не сносится", !g.canDemolish("player", hq) && !g.demolish("player", hq));
+  ok("чужое заведение не снести", !g.demolish("player", foreign) && foreign.kind === "bar");
+  const before = g.money;
+  ok("снос возвращает точку в простое состояние",
+    g.demolish("player", mine) && mine.kind === null && g.bizIncome(mine) === mine.income,
+    `kind=${mine.kind}, доход ${g.bizIncome(mine)} при базовом ${mine.income}`);
+  ok("за снос деньги не возвращаются", g.money === before, `было ${before}, стало ${g.money}`);
+  ok("после сноса точку можно улучшить заново за полную цену",
+    g.buyUpgrade("player", mine, "bar") && mine.kind === "bar" &&
+    Math.round(g.money) === Math.round(before) - g.UPGRADES.bar.cost,
+    `kind=${mine.kind}, касса ${Math.round(g.money)}`);
+  ok("улучшение поверх улучшения по-прежнему запрещено — только через снос",
+    !g.buyUpgrade("player", mine, "strip") && mine.kind === "bar");
 }
 
 // ---------- экономика: свой кошелёк у каждой фракции, счёт не уходит в минус ----------
@@ -388,11 +477,12 @@ function ok(name, cond, extra) {
 
 // ---------- улучшенная точка: берётся дольше и достаётся захватчику ----------
 {
-  function grabTime(kind) {
+  function grabTime(kind, raze) {
     const g = loadGame();
     g.reset(1);
     const b = g.businesses.find(x => x.owner === "neutral" && g.captureSpots(x).length);
     b.kind = kind;                                   // ничья точка с уже готовым заведением
+    if (raze) g.demolish(b.owner, b);                // ...которое снесли перед боем
     const s = g.captureSpots(b)[0];
     g.spawnUnit("bouncer", s.x, s.y, "player");
     let t = 0;
@@ -404,6 +494,11 @@ function ok(name, cond, extra) {
   ok("улучшенная точка захватывается медленнее", up.t > plain.t * (exp - 0.15) && up.t < plain.t * (exp + 0.15),
     `обычная ${plain.t.toFixed(1)}с, улучшенная ${up.t.toFixed(1)}с, ожидалось ×${exp.toFixed(2)}`);
   ok("улучшение переходит к захватчику вместе с точкой", up.kind === "bar");
+  // Снос снимает и надбавку к времени захвата: защищаться сносом нельзя, это выжженная земля
+  const razed = grabTime("bar", true);
+  ok("снесённая точка снова берётся с обычной скоростью",
+    razed.kind === null && razed.t < plain.t * 1.15,
+    `снесённая ${razed.t.toFixed(1)}с против обычной ${plain.t.toFixed(1)}с`);
 }
 
 // ---------- ИИ улучшает по тем же правилам и из своего кошелька ----------
@@ -425,18 +520,66 @@ function ok(name, cond, extra) {
   ok("без денег ИИ не улучшает", !c || c.kind === null);
 }
 
+// ---------- ИИ перестраивает только когда строить негде ----------
+{
+  // Два стриптиза при доле 20% дают по $12; решение проблем — $18, то есть перевес
+  // ×1.5 при пороге AI_SWAP_GAIN. Считаем на явных цифрах, а не на «примерно лучше».
+  function world() {
+    const g = loadGame();
+    g.reset(1);
+    g.businesses.forEach(b => { b.kind = null; });
+    g.businesses.filter(b => !b.hq && b.owner !== "player").slice(0, 2)
+      .forEach(b => { b.owner = "ai1"; b.kind = "strip"; });
+    g.aiFavor.ai1 = "fixer";
+    g.funds.ai1 = 5000;
+    return g;
+  }
+  const g = world();
+  // всё, что у ИИ есть, уже застроено — значит вкладываться больше некуда
+  g.businesses.forEach(b => { if (b.owner === "ai1" && !b.hq && !b.kind) b.owner = "neutral"; });
+  const worth = g.bizIncomeOf("ai1", g.businesses.find(b => b.kind === "strip"));
+  ok("порог перестройки посчитан на живых числах",
+    worth === 12 && g.upIncomeAt("ai1", "fixer", 1) === 18 && 18 >= worth * g.AI_SWAP_GAIN,
+    `стриптиз ${worth}, решала ${g.upIncomeAt("ai1", "fixer", 1)}, порог ×${g.AI_SWAP_GAIN}`);
+  g.aiUpgrade("ai1");
+  ok("ИИ сносит слабое заведение, когда строить негде",
+    g.businesses.filter(b => b.owner === "ai1" && b.kind === "fixer").length === 1 &&
+    g.businesses.filter(b => b.owner === "ai1" && b.kind === "strip").length === 1 &&
+    g.funds.ai1 === 5000 - g.UPGRADES.fixer.cost,
+    `касса ${g.funds.ai1}`);
+
+  const h = world();                       // та же расстановка, но есть ровно одна чистая точка
+  h.businesses.forEach(b => { if (b.owner === "ai1" && !b.hq && !b.kind) b.owner = "neutral"; });
+  const free = h.businesses.find(b => b.owner === "neutral" && !b.hq && !b.kind);
+  free.owner = "ai1";
+  h.aiUpgrade("ai1");
+  ok("пока есть куда строить, ИИ ничего не сносит",
+    free.kind === "fixer" && h.businesses.filter(b => b.owner === "ai1" && b.kind === "strip").length === 2,
+    `свободная ${free.kind}, стриптизов ${h.businesses.filter(b => b.owner === "ai1" && b.kind === "strip").length}`);
+
+  const w = world();                       // перевес есть, но кассы на новое заведение нет
+  w.businesses.forEach(b => { if (b.owner === "ai1" && !b.hq && !b.kind) b.owner = "neutral"; });
+  w.funds.ai1 = 100;
+  w.aiUpgrade("ai1");
+  ok("без денег ИИ не сносит и не остаётся с голой точкой",
+    w.businesses.filter(b => b.owner === "ai1" && b.kind === "strip").length === 2);
+}
+
 // ---------- панель улучшений ----------
 {
   const g = loadGame();
   g.reset(1);
   g.money = 5000; g.update(0.001);
   ok("панель: без выбора кнопки улучшений выключены", g.els.buyUpBar.disabled === true);
+  ok("панель: без выбора сносить нечего",
+    g.els.btnDemolish.disabled === true && g.els.costDemolish.textContent === "—");
   ok("панель: цена улучшения на месте", g.els.costUpBar.textContent === "$" + g.UPGRADES.bar.cost,
     g.els.costUpBar.textContent);
   g.selBiz = g.playerHQ(); g.update(0.001);
   ok("панель: штаб улучшать не даёт",
     g.els.buyUpBar.disabled === true && /Штаб/.test(g.els.upSel.textContent), g.els.upSel.textContent);
-  const mine = g.businesses.find(b => b.owner === "player" && !b.hq);
+  const mine = g.businesses.find(b => b.owner === "neutral" && !b.hq);   // захваченная по ходу партии
+  mine.owner = "player";
   g.selBiz = mine; g.update(0.001);
   ok("панель: своя точка включает кнопки", g.els.buyUpBar.disabled === false);
   ok("панель: рынок показывает свою долю и размер",
@@ -445,6 +588,13 @@ function ok(name, cond, extra) {
   ok("панель: после улучшения кнопки гаснут", g.els.buyUpBar.disabled === true && mine.kind === "strip");
   ok("панель: доля в целых процентах",
     /Стриптиз: <b[^>]*>10%<\/b> · рынок 10/.test(g.els.market.innerHTML), g.els.market.innerHTML);
+  // Снос и улучшение — взаимно исключающие кнопки: включена всегда ровно одна сторона
+  ok("панель: после улучшения снос включён и назван",
+    g.els.btnDemolish.disabled === false && g.els.costDemolish.textContent === g.UPGRADES.strip.short,
+    g.els.costDemolish.textContent);
+  g.playerDemolish(); g.update(0.001);
+  ok("панель: снос возвращает точку в простое состояние",
+    mine.kind === null && g.els.btnDemolish.disabled === true && g.els.buyUpBar.disabled === false);
   // потеря точки снимает выбор сама, без отдельного хука в захвате
   mine.owner = "ai1"; g.update(0.001);
   ok("панель: потерянная точка снимает выбор", g.selBiz === null);
