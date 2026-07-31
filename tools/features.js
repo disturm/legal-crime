@@ -266,6 +266,10 @@ function ok(name, cond, extra) {
   ok("дом без выхода на дорогу не виден", !deep || !g.canSee("player", deep[0] * T + T / 2, deep[1] * T + T / 2),
     deep ? `клетка ${deep}` : "такого дома рядом не нашлось");
 
+  // Своя точка — это свои люди на месте: обзор не хуже живого стрелка и во все стороны,
+  // то есть со всех подходов, а не с одного случайного соседа непроходимой клетки.
+  ok("заведение видит не хуже стрелка", g.SIGHT_BIZ >= g.TYPES.shooter.sight && g.SIGHT_HQ >= g.SIGHT_BIZ,
+    `точка ${g.SIGHT_BIZ}, штаб ${g.SIGHT_HQ}, стрелок ${g.TYPES.shooter.sight}`);
   // чужие бойцы на старте — за туманом
   const far = g.units.filter(x => x.team !== "player");
   ok("чужие бойцы на старте не видны", far.every(p => !g.canSee("player", p.x, p.y)),
@@ -287,6 +291,43 @@ function ok(name, cond, extra) {
     g.updateVision(1);
     ok("разведанная точка показывает настоящего владельца",
       g.knownOwner("player", spy) === spy.owner, `память ${g.knownOwner("player", spy)}, факт ${spy.owner}`);
+  }
+}
+
+// ---------- своя точка светит во все стороны, а не в одну сторону ----------
+// Заведение стоит в непроходимой клетке: обзор из его центра ушёл бы в ОДИН соседний
+// проходимый тайл (nearestPassable), и дальняя грань дома осталась бы в тумане.
+// Требование — видны все подходы к своей точке, те же captureSpots, что и у захвата.
+{
+  const g = loadGame();
+  g.reset(2, 1007);                                 // сид: карта воспроизводима, подходы известны
+  const far = g.businesses.filter(b => !b.hq && g.captureSpots(b).length >= 2
+    && g.units.every(u => Math.hypot(u.x - b.x, u.y - b.y) > 600));
+  const b = far[0];
+  const seen = () => { let n = 0; const v = g.vis.player; for (let i = 0; i < v.length; i++) n += v[i]; return n; };
+  if (!b) { ok("нашлась точка с двумя подходами вдали от бойцов", false); }
+  else {
+    const sp = g.captureSpots(b);
+    g.updateVision(1);
+    const base = seen();
+    ok("ничья точка обзора не даёт", sp.every(s => !g.canSee("player", s.x, s.y)));
+
+    b.owner = "player";                             // как будто её только что захватили
+    g.updateVision(1);
+    const withBiz = seen() - base;
+    const dark = sp.filter(s => !g.canSee("player", s.x, s.y));
+    ok("свою точку видно со всех подходов", dark.length === 0,
+      `подходов ${sp.length}, тёмных ${dark.length}`);
+
+    // «не хуже стрелка»: точка открывает не меньше клеток, чем живой стрелок,
+    // поставленный на один из её же подходов
+    b.owner = "neutral";
+    g.updateVision(1);
+    g.spawnUnit("shooter", sp[0].x, sp[0].y, "player");
+    g.updateVision(1);
+    const withMan = seen() - base;
+    ok("точка видит не меньше стрелка на её пороге", withBiz >= withMan,
+      `точка открыла ${withBiz} клеток, стрелок ${withMan}`);
   }
 }
 

@@ -1271,7 +1271,10 @@ function nearestEnemy(u,maxd){
 // Модель на два состояния: город и расположение заведений известны всегда — это твой район.
 // Туман скрывает живое: чужих бойцов, пули, следы боя, актуального владельца точки и её захват.
 // Обзор режется теми же домами, что и стрельба (hasLOS), поэтому улицы работают коридорами.
-const SIGHT_BIZ=190, SIGHT_HQ=260;   // заведение и штаб дают обзор своему владельцу
+// Заведение и штаб дают обзор своему владельцу, и не хуже живого стрелка: точка — это свои люди
+// на месте, а не пустая витрина. Обзор идёт со ВСЕХ подходов к зданию (см. updateVision),
+// поэтому угловая точка светит и вдоль улицы, и вдоль переулка.
+const SIGHT_BIZ=TYPES.shooter.sight, SIGHT_HQ=SIGHT_BIZ+70;
 const FOG_SOFT=true;                 // мягкая кромка тумана; false — плоские кварталы
 const vis={};                        // vis[фракция] = Uint8Array(COLS*ROWS), 1 = клетка видна сейчас
 const losCache=new Map();            // «из клетки X с радиусом R видны такие-то клетки»
@@ -1325,8 +1328,15 @@ function updateVision(dt){
   fogTimer=0.12;                                  // 8 раз в секунду — глазу и ИИ хватает
   for(const f of factions) if(vis[f]) vis[f].fill(0);
   for(const u of units){ if(u.hp>0) markVision(u.team,u.x,u.y,u.sight); }
+  // Заведение стоит в непроходимой клетке, и один markVision по её центру ушёл бы
+  // в ОДНУ соседнюю клетку (nearestPassable) — точка светила бы только в ту сторону,
+  // а угол дома глушил бы остальные. Поэтому обзор идёт со всех подходов сразу:
+  // те же captureSpots, что и у захвата — с какой стороны можно подойти, ту и видно.
   for(const b of businesses){
-    if(b.owner!=="neutral") markVision(b.owner,b.x,b.y,b.hq?SIGHT_HQ:SIGHT_BIZ);
+    if(b.owner==="neutral") continue;
+    const R=b.hq?SIGHT_HQ:SIGHT_BIZ, spots=captureSpots(b);
+    if(spots.length) for(const s of spots) markVision(b.owner,s.x,s.y,R);
+    else markVision(b.owner,b.x,b.y,R);   // подхода нет (карта-заглушка) — светим как раньше
   }
   // что фракция видит сейчас — то и запоминает; вне обзора остаётся вчерашняя картина
   for(const b of businesses){
