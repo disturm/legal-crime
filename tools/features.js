@@ -851,6 +851,37 @@ function ok(name, cond, extra) {
   ok("чужой центр точкой сбора не назначить", !g.canRally("player", mine) && !g.setRally("player", mine));
 }
 
+// ---------- точка сбора: любой свой штаб ----------
+// Родной штаб держит сбор по умолчанию, а отбитый у выбывшей фракции — точка как точка:
+// база остаётся базой, и строить в ней зал ради найма было бы нелепо. Отличается родной
+// штаб стабильным b.hq, а не владельцем: владелец у трофея тоже свой.
+{
+  const g = loadGame();
+  g.reset(2);
+  const hq = g.playerHQ(), trophy = g.factionHQ("ai1");
+  ok("родной штаб — сбор по умолчанию", g.rallyPoint("player") === hq && g.canRally("player", hq));
+  ok("чужой штаб точкой сбора не назначить",
+    !g.canRally("player", trophy) && !g.setRally("player", trophy));
+  trophy.owner = "player";                       // штаб взят, фракция выбыла
+  ok("трофейный штаб держит сбор", g.canRally("player", trophy) &&
+    g.setRally("player", trophy) && g.rallyPoint("player") === trophy);
+  ok("родной штаб узнаётся по b.hq, а не по владельцу",
+    g.homeHQ("player", hq) && !g.homeHQ("player", trophy));
+
+  g.money = 5000;
+  const before = g.units.length;
+  g.selectBuy("bouncer");
+  const fresh = g.units[g.units.length - 1];
+  ok("наём выходит у трофейного штаба, а не у родного", g.units.length === before + 1 &&
+    Math.hypot(fresh.x - trophy.x, fresh.y - trophy.y) < Math.hypot(fresh.x - hq.x, fresh.y - hq.y),
+    `до трофея ${Math.round(Math.hypot(fresh.x - trophy.x, fresh.y - trophy.y))}, ` +
+    `до родного ${Math.round(Math.hypot(fresh.x - hq.x, fresh.y - hq.y))}`);
+
+  // отбили трофей обратно — сбор вернулся домой сам, без хука в захвате
+  trophy.owner = "ai2";
+  ok("отбитый трофейный штаб возвращает сбор домой", g.rallyPoint("player") === hq);
+}
+
 // ИИ и бот в сим тренировочный центр не строят: подкрепления ИИ и так выходят
 // у случайной СВОЕЙ точки, то есть сбор у него распределён даром. Пустить его
 // в жадность по «доходу на доллар» — значит дать ИИ денежную дыру, которой у игрока нет.
@@ -923,7 +954,7 @@ function ok(name, cond, extra) {
   mine.owner = "player";
   g.selBiz = mine; g.update(0.001);
   ok("панель: простая точка сбор не держит",
-    g.els.btnRally.disabled === true && g.els.costRally.textContent === "нужен зал",
+    g.els.btnRally.disabled === true && g.els.costRally.textContent === "зал или штаб",
     g.els.costRally.textContent);
   g.playerUpgrade("gym"); g.update(0.001);
   ok("панель: у своего центра кнопка сбора включена",
@@ -941,6 +972,28 @@ function ok(name, cond, extra) {
   // рынок — только доходные типы: у зала доли нет, и строки о нём быть не должно
   ok("панель: центра нет среди строк рынка",
     !new RegExp(g.UPGRADES.gym.name).test(g.els.market.innerHTML), g.els.market.innerHTML);
+
+  // Трофейный штаб — та же кнопка на оба хода: у родного штаба «вернуть» нечего,
+  // у отбитого оба хода живые. Разница считается по b.hq, и панель обязана её видеть.
+  const trophy = g.factionHQ("ai1");
+  trophy.owner = "player";
+  g.selBiz = trophy; g.update(0.001);
+  ok("панель: у трофейного штаба кнопка сбора включена",
+    g.els.btnRally.disabled === false && g.els.costRally.textContent === "сюда" &&
+    /Перенести/.test(g.els.rallyLabel.textContent), g.els.costRally.textContent);
+  g.playerRally(); g.update(0.001);
+  ok("панель: сбор переехал в трофейный штаб и кнопка стала обратной",
+    g.rallyPoint("player") === trophy && g.els.costRally.textContent === "здесь" &&
+    /Вернуть/.test(g.els.rallyLabel.textContent), g.els.rallyLabel.textContent);
+  // родной штаб при этом предлагает забрать сбор обратно себе
+  g.selBiz = g.playerHQ(); g.update(0.001);
+  ok("панель: родной штаб зовёт сбор обратно",
+    g.els.btnRally.disabled === false && g.els.costRally.textContent === "сюда");
+  g.playerRally(); g.update(0.001);
+  ok("панель: сбор снова дома, и возвращать нечего",
+    g.rallyPoint("player") === g.playerHQ() &&
+    g.els.btnRally.disabled === true && g.els.costRally.textContent === "в штабе",
+    g.els.costRally.textContent);
 }
 
 // ---------- разметка: кнопка на каждый тип заведения ----------
