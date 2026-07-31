@@ -38,7 +38,7 @@ const BRIDGE = `
   funds, fInc, fUp, tickEconomy,
   UPGRADES, UP_KEYS, MARKET_KEYS, MARKET_MIN, aiFavor, CAP_UPGRADED,
   marketCount, marketSize, marketPct, bizIncome, bizIncomeOf, bizBaseIncome, bizTag, upIncomeAt,
-  bizUpkeep, rally, canRally, setRally, rallyPoint, resetRally, playerRally,
+  bizUpkeep, rally, canRally, setRally, rallyPoint, resetRally, playerRally, homeHQ,
   canUpgrade, buyUpgrade, playerUpgrade, aiUpgrade,
   canDemolish, demolish, playerDemolish, aiSwap, AI_SWAP_GAIN,
   UPKEEP_SHARE, WAVE_MAX, AI_UP_RESERVE, aiCanHire, aiPickHire, BOUNCER_SHARE, BOUNCER_MIN, bouncerShare, armyMix,
