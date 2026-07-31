@@ -29,7 +29,11 @@ const BRIDGE = `
   funds, fInc, fUp, tickEconomy,
   UPGRADES, UP_KEYS, MARKET_MIN, aiFavor, CAP_UPGRADED,
   marketCount, marketSize, marketPct, bizIncome, bizIncomeOf, bizBaseIncome, upIncomeAt,
-  canUpgrade, buyUpgrade, playerUpgrade, aiUpgrade
+  canUpgrade, buyUpgrade, playerUpgrade, aiUpgrade,
+  get musicOn(){return musicOn}, get sfxOn(){return sfxOn},
+  get actx(){return actx},   // в тесте им двигают currentTime: бюджет голосов и планировщик считают по нему
+  SHOTS, sfx, setAudio, toggleMute, audioInit, audioResume, audioDuck,
+  musicTick, musicStart, musicStop, syncAudioUI
 };`;
 
 function stubCtx() {
@@ -45,8 +49,52 @@ function makeEl() {
   };
 }
 
+// Заглушка WebAudio — по образцу заглушки канваса, но ЗАПИСЫВАЮЩАЯ: по ней видно,
+// сколько голосов завёл звук и из каких узлов он собран. В Node AudioContext нет,
+// а звуковой код обязан прогоняться тестами так же, как рендер.
+// Новый тип узла в игре — дописать сюда, иначе тест упадёт на undefined.
+function audioStub(log) {
+  // Параметр помнит, что в него писали: по этому следу видно, что вышибала, стрелок
+  // и снайпер звучат по-разному, а не одним и тем же узлом с другим именем.
+  const param = v => ({
+    value: v, log: [],
+    set(x) { this.value = x; this.log.push(Math.round(x * 10) / 10); return this; },
+    setValueAtTime(x) { return this.set(x); },
+    linearRampToValueAtTime(x) { return this.set(x); },
+    exponentialRampToValueAtTime(x) { return this.set(x); },
+    setTargetAtTime(x) { return this.set(x); },
+    cancelScheduledValues() { return this; },
+  });
+  const node = (kind, extra) => {
+    const n = Object.assign({ kind, connect(to) { return to; }, disconnect() {} }, extra || {});
+    log.nodes.push(kind); log.made.push(n);
+    return n;
+  };
+  const src = extra => node(extra.kind, Object.assign({
+    start() { log.voices++; }, stop() {},
+  }, extra));
+  return class AudioContextStub {
+    constructor() {
+      this.currentTime = 0; this.sampleRate = 44100; this.state = "running";
+      this.destination = node("dest");
+    }
+    resume() { this.state = "running"; }
+    createGain() { return node("gain", { gain: param(1) }); }
+    createBiquadFilter() { return node("filter", { type: "lowpass", frequency: param(1e3), Q: param(1), gain: param(0) }); }
+    createStereoPanner() { return node("pan", { pan: param(0) }); }
+    createDynamicsCompressor() {
+      return node("comp", { threshold: param(-24), knee: param(30), ratio: param(12), attack: param(0), release: param(0) });
+    }
+    createOscillator() { return src({ kind: "osc", type: "sine", frequency: param(440), detune: param(0) }); }
+    createBufferSource() { return src({ kind: "noise", buffer: null, loop: false }); }
+    createBuffer(ch, len) { return { numberOfChannels: ch, length: len, getChannelData: () => new Float32Array(len) }; }
+  };
+}
+
 // Возвращает api загруженной партии. Каждый вызов — новый мир со своей картой.
-function loadGame(w = 1200, h = 800) {
+// opts.audio — подсунуть заглушку WebAudio. По умолчанию её НЕТ: так проверяется,
+// что игра живёт вообще без AudioContext, и sim.js не платит за звук на каждом выстреле.
+function loadGame(w = 1200, h = 800, opts = {}) {
   const html = fs.readFileSync(GAME, "utf8");
   const code = html.match(/<script>([\s\S]*)<\/script>/)[1] + BRIDGE;
   const els = {};
@@ -59,11 +107,31 @@ function loadGame(w = 1200, h = 800) {
     location: { reload: () => {} },
     console,
   };
+  const log = {
+    voices: 0, nodes: [], made: [],
+    reset() { this.voices = 0; this.nodes.length = 0; this.made.length = 0; },
+    // подпись звука: узлы с типом фильтра/осциллятора и следом по частоте
+    sig() {
+      return this.made.map(n => {
+        const f = n.frequency;
+        const hz = !f ? "" : (f.log.length ? f.log.join(">") : f.value);
+        return [n.kind, n.type || "", hz].filter(Boolean).join(":");
+      }).join(" ");
+    },
+  };
+  if (opts.audio) {
+    sandbox.AudioContext = audioStub(log);
+    // Планировщик музыки не должен тикать сам по себе: тест зовёт musicTick вручную,
+    // иначе число нот зависело бы от того, сколько шёл сам тест.
+    sandbox.setInterval = () => 1;
+    sandbox.clearInterval = () => {};
+  }
   sandbox.window = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox);
   sandbox.api.W = w; sandbox.api.H = h;   // ResizeObserver в Node не срабатывает
   sandbox.api.els = els;                  // заглушки панели: по ним видно, что показано игроку
+  sandbox.api.audioLog = log;             // счётчик голосов звуковой заглушки
   return sandbox.api;
 }
 

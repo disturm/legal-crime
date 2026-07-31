@@ -552,5 +552,104 @@ function ok(name, cond, extra) {
   ok("сид карты записан", g.mapSeed > 0, `mapSeed=${g.mapSeed}`);
 }
 
+// ---------- звук: выстрелы фогнуты, тумблеры едины, джаз идёт ----------
+{
+  // с заглушкой WebAudio: без неё весь звуковой модуль — no-op (это проверяется ниже отдельно)
+  const g = loadGame(1200, 800, { audio: true });
+  g.reset(1);
+  g.audioInit();
+  const log = g.audioLog;
+  const wait = s => { g.actx.currentTime += s; };     // время в песочнице само не идёт
+  // подпись звука: из каких узлов он собран. Разные классы обязаны звучать по-разному.
+  const shot = (type, x, y) => { log.reset(); const okShot = g.sfx(type, x, y); return { okShot, sig: log.sig(), voices: log.voices }; };
+
+  ok("звук завёлся по жесту", !!g.actx);
+  ok("у каждого класса есть свой синтез выстрела",
+    Object.keys(g.TYPES).every(t => typeof g.SHOTS[t] === "function"),
+    Object.keys(g.TYPES).filter(t => typeof g.SHOTS[t] !== "function").join(",") || "все на месте");
+
+  const u = g.units.find(x => x.team === "player");
+  const sigs = {};
+  for (const t of Object.keys(g.TYPES)) {
+    wait(0.5);                                       // бюджет голосов считается в окне 0.1 с
+    const r = shot(t, u.x, u.y);
+    ok(`выстрел «${t}» звучит`, r.okShot && r.voices > 0, `голосов ${r.voices}`);
+    sigs[t] = r.sig;
+  }
+  const uniq = new Set(Object.values(sigs));
+  ok("у каждого класса свой звук, а не один на всех", uniq.size === Object.keys(sigs).length,
+    Object.keys(sigs).map(t => `${t}: ${sigs[t]}`).join(" | "));
+
+  // бюджет голосов: залп в одном окне не должен уходить в кашу
+  wait(1);
+  let fired = 0;
+  for (let i = 0; i < 20; i++) if (g.sfx("shooter", u.x, u.y)) fired++;
+  ok("бюджет голосов режет залп", fired > 0 && fired <= 6, `прошло ${fired} из 20`);
+
+  // Туман: слух не должен видеть сквозь него. Камеру наводим НА врага, иначе проверка
+  // прошла бы по затуханию за краем экрана, а не по обзору.
+  const e = g.units.find(x => x.team !== "player");
+  g.cam.x = e.x - 1200 / 2; g.cam.y = e.y - 800 / 2;
+  wait(1);
+  ok("чужой боец на старте не виден", !g.canSee("player", e.x, e.y));
+  ok("выстрел за туманом не слышно", !shot("shooter", e.x, e.y).okShot);
+  g.spawnUnit("bouncer", e.x, e.y, "player");        // подвели своего — враг проявился
+  g.updateVision(1);
+  wait(1);
+  ok("тот же выстрел на виду слышно", shot("shooter", e.x, e.y).okShot);
+
+  // выстрел на другом конце города — за пределами слышимости
+  wait(1);
+  ok("выстрел далеко за экраном не слышно",
+    !shot("shooter", e.x + g.WORLD_W, e.y).okShot);
+
+  // тумблер звуков
+  g.setAudio("sfx", false, true);
+  wait(1);
+  const off = shot("bouncer", u.x, u.y);
+  ok("при выключенных звуках не звучит ничего", !off.okShot && off.voices === 0);
+  ok("галка звуков одна на панель и стартовый экран",
+    g.els.optSfx.checked === false && g.els.ovSfx.checked === false,
+    `панель ${g.els.optSfx.checked}, старт ${g.els.ovSfx.checked}`);
+  g.setAudio("sfx", true, true);
+
+  // джаз: планировщик раскладывает ноты вперёд, выключенный — молчит
+  log.reset(); wait(4);
+  const notes = g.musicTick();
+  ok("джаз ставит ноты вперёд", notes > 0 && log.voices > 0, `нот ${notes}, голосов ${log.voices}`);
+  ok("в джазе есть и бас, и щётки",
+    log.nodes.includes("osc") && log.nodes.includes("noise"), log.nodes.join(","));
+  g.setAudio("music", false, true);
+  log.reset(); wait(4);
+  ok("выключенный джаз не ставит нот", g.musicTick() === 0 && log.voices === 0, `голосов ${log.voices}`);
+  ok("галка джаза синхронна в обоих местах",
+    g.els.optMusic.checked === false && g.els.ovMusic.checked === false);
+  g.setAudio("music", true, true);
+
+  // M — общий мьют, и он возвращает ту же комбинацию, что была
+  g.setAudio("music", true, true); g.setAudio("sfx", false, true);
+  g.toggleMute();
+  ok("M гасит всё разом", !g.musicOn && !g.sfxOn);
+  g.toggleMute();
+  ok("повторный M возвращает прежние галки", g.musicOn === true && g.sfxOn === false,
+    `музыка ${g.musicOn}, звуки ${g.sfxOn}`);
+}
+
+// ---------- без AudioContext игра работает как раньше ----------
+{
+  const g = loadGame();                              // без заглушки звука — как в песочнице tools/
+  g.reset(2);
+  ok("без AudioContext контекст не заводится", !g.actx);
+  const u = g.units.find(x => x.team === "player"), e = g.units.find(x => x.team !== "player");
+  let threw = null;
+  try {
+    g.audioInit(); g.audioResume(); g.audioDuck(true); g.setAudio("music", true, true);
+    g.toggleMute(); g.musicTick(); g.fire(u, e);
+    for (let i = 0; i < 200; i++) g.update(0.05);
+  } catch (err) { threw = err; }
+  ok("звуковые вызовы без AudioContext не бросают", !threw, threw && threw.message);
+  ok("выстрел без звука всё равно наносит урон", e.hp < g.TYPES[e.type].hp, `hp=${e.hp}`);
+}
+
 console.log(fails ? `\nПРОВАЛЕНО проверок: ${fails}` : "\nвсе проверки пройдены");
 process.exit(fails ? 1 : 0);

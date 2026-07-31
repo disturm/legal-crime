@@ -135,6 +135,10 @@
     <div class="grp-title">Твой рынок</div>
     <div id="market" style="font-size:11px;color:var(--dim);line-height:1.6"></div>
 
+    <div class="grp-title">Звук — <kbd>M</kbd> гасит всё разом</div>
+    <label class="opt"><input type="checkbox" id="optMusic" checked> Джаз</label>
+    <label class="opt"><input type="checkbox" id="optSfx" checked> Звуки боя</label>
+
     <label class="opt"><input type="checkbox" id="optEdge"> Прокрутка краями экрана</label>
 
     <div class="hint">
@@ -152,7 +156,8 @@
       • ПКМ по бизнесу — маршрут к точке перед его гранью, откуда идёт захват<br>
       • ПКМ по врагу — атаковать<br>
       • Найм: <b>1 2 3 4</b> или кнопки — сперва взятка, потом боец в штабе<br>
-      • Пробел — пауза<br><br>
+      • Пробел — пауза · <b>M</b> — выключить весь звук<br>
+      • Галки «Джаз» и «Звуки боя» выше — по отдельности<br><br>
       <b>Цвет</b> — чья сторона, <b>форма</b> — класс бойца.
       В бизнес не зайти, сквозь дома не стреляют.<br><br>
       <b>Захват:</b> подойти вплотную к грани заведения (только в лоб, не по диагонали).
@@ -182,6 +187,11 @@
     <button id="ovN1">1 противник</button>
     <button id="ovN2">2 противника</button>
     <button id="ovN3">3 противника</button>
+  </div>
+  <!-- те же два тумблера, что в панели: одно состояние, два места показа -->
+  <div id="ovAudio" style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:14px">
+    <label class="opt"><input type="checkbox" id="ovMusic" checked> Джаз</label>
+    <label class="opt"><input type="checkbox" id="ovSfx" checked> Звуки боя</label>
   </div>
   <button id="ovAgain" style="display:none">Заново</button>
 </div></div>
@@ -785,7 +795,9 @@ let selBiz=null;                           // выбранное своё зав
 // ---------- Ввод ----------
 const keys={};
 addEventListener("keydown",e=>{keys[e.code]=1;
+  audioResume();                        // клавиша — такой же жест игрока, как клик
   if(e.code==="Space"){paused=!paused;e.preventDefault();}
+  if(e.code==="KeyM") toggleMute();     // общий мьют; галки в панели — по отдельности
   // найм с клавиатуры — боец сразу появляется в штабе; цифра = место класса в BUY_KEYS
   if(/^Digit[1-9]$/.test(e.code)){ const t=BUY_KEYS[+e.code.slice(5)-1]; if(t) selectBuy(t); }
   if(e.code==="KeyH"){   // мгновенно к своему штабу — стандартный хоткей жанра
@@ -810,6 +822,7 @@ function evScreen(e){ const r=canvas.getBoundingClientRect(); return {x:e.client
 function evWorld(e){ const s=evScreen(e); return s2w(s.x,s.y); }
 
 canvas.addEventListener("mousedown",e=>{
+  audioResume();                        // первый клик по карте — жест, по которому заводится звук
   const s=evScreen(e);
   // миникарта перехватывает клики целиком: ЛКМ — перейти, ПКМ — приказ в ту точку.
   // Иначе клик проваливался бы в мир, который нарисован под ней
@@ -1518,6 +1531,7 @@ function fire(u,tgt){
   // Снайпер снимает с одного выстрела, но только зазевавшегося: по тому, кто сам
   // ведёт бой, выстрел проходит вскользь.
   const dmg = (u.type==="sniper"&&tgt.combat>0) ? Math.round(u.dmg*SNIPER_ENGAGED) : u.dmg;
+  sfx(u.type,u.x,u.y);                   // единственная точка звука выстрела — и она фогнута
   if(u.type==="bouncer"){ // ближний удар — мгновенно
     tgt.hp-=dmg; hit(tgt.x,tgt.y,u.color); fx.push({x:(u.x+tgt.x)/2,y:(u.y+tgt.y)/2,t:0,max:.12,type:"swing",color:u.color});
   }else{
@@ -1539,25 +1553,353 @@ function checkEnd(){
 }
 function endGame(){ if(ended)return; ended=true; paused=true; showOver(outcome==="win"); }
 
+// ---------- Звук ----------
+// Ни одного внешнего файла и здесь: и джаз, и выстрелы синтезируются WebAudio,
+// ровно как вся графика рисуется кодом на канвасе.
+// Весь модуль — полный no-op, если AudioContext нет вовсе: в песочнице tools/ его нет,
+// и игра обязана грузиться и считаться там как раньше.
+const AudioCtor = typeof AudioContext!=="undefined" ? AudioContext
+                : (typeof webkitAudioContext!=="undefined" ? webkitAudioContext : null);
+let musicOn=true, sfxOn=true;         // тумблеры: ОДНО состояние на панель и стартовый экран
+let actx=null, masterGain=null, musicGain=null, sfxGain=null, noiseBuf=null;
+const MUSIC_VOL=0.16, SFX_VOL=0.5;    // джаз заметно тише выстрелов: он фон, а не событие
+
+// Контекст заводится лениво, по ПЕРВОМУ ЖЕСТУ игрока (кнопка старта, клик, клавиша):
+// раньше жеста браузер всё равно держит звук заглушённым.
+function audioInit(){
+  if(actx || !AudioCtor) return null;
+  actx=new AudioCtor();
+  // компрессор на выходе: залп полутора десятков стволов не должен клипать
+  const comp=actx.createDynamicsCompressor();
+  comp.connect(actx.destination);
+  masterGain=actx.createGain(); masterGain.gain.value=0.9; masterGain.connect(comp);
+  musicGain=actx.createGain(); musicGain.gain.value=MUSIC_VOL; musicGain.connect(masterGain);
+  sfxGain=actx.createGain();   sfxGain.gain.value=SFX_VOL;   sfxGain.connect(masterGain);
+  // один буфер белого шума на всё: и на выстрелы, и на щётки по тарелке
+  const n=Math.floor(actx.sampleRate*1.0);
+  noiseBuf=actx.createBuffer(1,n,actx.sampleRate);
+  const ch=noiseBuf.getChannelData(0);
+  for(let i=0;i<n;i++) ch[i]=Math.random()*2-1;
+  if(musicOn) musicStart();
+  return actx;
+}
+function audioResume(){
+  if(!AudioCtor) return;
+  if(!actx) audioInit();
+  else if(actx.state==="suspended" && actx.resume) actx.resume();
+}
+function noiseSrc(){ const s=actx.createBufferSource(); s.buffer=noiseBuf; s.loop=true; return s; }
+// Шум читается со СЛУЧАЙНОГО места буфера: иначе все выстрелы — побитово один и тот же
+// щелчок, и очередь звучит как заевшая пластинка.
+function startNoise(n,t,dur){ n.start(t, Math.random()*0.9); n.stop(t+dur); }
+function midiHz(m){ return 440*Math.pow(2,(m-69)/12); }
+// Огибающая «удар → спад»: атака за atk, дальше экспонента в тишину к t0+dur.
+// exponentialRamp не умеет в ноль — отсюда 0.0001 вместо нуля.
+function env(node,t0,peak,atk,dur){
+  const g=node.gain;
+  g.setValueAtTime(0.0001,t0);
+  g.linearRampToValueAtTime(peak,t0+atk);
+  g.exponentialRampToValueAtTime(0.0001,t0+dur);
+}
+
+// --- Выстрелы ---
+// Бюджет голосов: больше SFX_VOICES выстрелов за SFX_WINDOW — уже не бой, а каша и клип.
+const SFX_WINDOW=0.1, SFX_VOICES=6;
+let sfxWinAt=-1, sfxWinN=0;
+function sfxSlot(t){
+  if(t-sfxWinAt>SFX_WINDOW){ sfxWinAt=t; sfxWinN=0; }
+  return ++sfxWinN<=SFX_VOICES;
+}
+// Громкость и панорама — от места на экране. Дальше полутора экранов не слышно вовсе:
+// иначе перестрелка на другом конце города звучит так же, как под носом.
+function sfxPlace(x,y){
+  const s=w2s(x,y);
+  const dx=Math.max(0,Math.abs(s.x-W/2)-W/2), dy=Math.max(0,Math.abs(s.y-H/2)-H/2);
+  const off=Math.hypot(dx,dy)/(Math.max(W,H)*0.75);
+  if(off>=1) return null;
+  return {vol:1-off, pan:Math.max(-1,Math.min(1,(s.x-W/2)/(W/2)))*0.7};
+}
+function sfxOut(p){
+  const g=actx.createGain(); g.gain.value=p.vol;
+  if(actx.createStereoPanner){
+    const pan=actx.createStereoPanner(); pan.pan.value=p.pan;
+    g.connect(pan); pan.connect(sfxGain);
+  }else g.connect(sfxGain);
+  return g;
+}
+// Дубина вышибалы: глухой удар без хвоста — придушенный шум плюс низкий «вум».
+function shotBouncer(bus,t){
+  const n=noiseSrc(), f=actx.createBiquadFilter(), g=actx.createGain();
+  f.type="lowpass"; f.frequency.setValueAtTime(900,t); f.frequency.exponentialRampToValueAtTime(200,t+0.05);
+  env(g,t,0.5,0.002,0.055);
+  n.connect(f); f.connect(g); g.connect(bus); startNoise(n,t,0.09);
+  const o=actx.createOscillator(), og=actx.createGain();
+  o.type="sine"; o.frequency.setValueAtTime(150,t); o.frequency.exponentialRampToValueAtTime(55,t+0.09);
+  env(og,t,0.7,0.002,0.1);
+  o.connect(og); og.connect(bus); o.start(t); o.stop(t+0.13);
+}
+// Пистолет стрелка: сухой щелчок средней высоты, короткий и частый.
+function shotShooter(bus,t){
+  const n=noiseSrc(), f=actx.createBiquadFilter(), g=actx.createGain();
+  f.type="bandpass"; f.frequency.setValueAtTime(1800,t); f.Q.value=0.8;
+  env(g,t,0.55,0.001,0.07);
+  n.connect(f); f.connect(g); g.connect(bus); startNoise(n,t,0.1);
+  const o=actx.createOscillator(), og=actx.createGain();
+  o.type="square"; o.frequency.setValueAtTime(320,t); o.frequency.exponentialRampToValueAtTime(90,t+0.06);
+  env(og,t,0.22,0.001,0.07);
+  o.connect(og); og.connect(bus); o.start(t); o.stop(t+0.09);
+}
+// Томпсон гробовщика: очередь в 6 выстрелов в секунду, поэтому каждый — короткий, сухой
+// и заметно тише пистолетного. Иначе один боец перекрывает собой весь бой.
+// Высота гуляет на ±8% от выстрела к выстрелу: без разброса очередь звучит как гудок,
+// а не как трещотка.
+function shotUndertaker(bus,t){
+  const k=0.92+Math.random()*0.16;
+  const n=noiseSrc(), f=actx.createBiquadFilter(), g=actx.createGain();
+  f.type="bandpass"; f.frequency.setValueAtTime(1000*k,t); f.Q.value=1.4;
+  env(g,t,0.4,0.001,0.05);
+  n.connect(f); f.connect(g); g.connect(bus); startNoise(n,t,0.07);
+  // деревянный «чух» приклада — он и отличает томпсон от пистолета на слух
+  const o=actx.createOscillator(), og=actx.createGain();
+  o.type="triangle"; o.frequency.setValueAtTime(220*k,t); o.frequency.exponentialRampToValueAtTime(70,t+0.045);
+  env(og,t,0.3,0.001,0.05);
+  o.connect(og); og.connect(bus); o.start(t); o.stop(t+0.07);
+}
+// Винтовка снайпера: яркий крак, низкий бум и тихое эхо по кварталу — редко, но слышно всем.
+function shotSniper(bus,t){
+  const n=noiseSrc(), f=actx.createBiquadFilter(), g=actx.createGain();
+  f.type="highpass"; f.frequency.value=1200;
+  env(g,t,0.9,0.001,0.12);
+  n.connect(f); f.connect(g); g.connect(bus); startNoise(n,t,0.15);
+  const o=actx.createOscillator(), og=actx.createGain();
+  o.type="sine"; o.frequency.setValueAtTime(90,t); o.frequency.exponentialRampToValueAtTime(38,t+0.25);
+  env(og,t,0.8,0.002,0.3);
+  o.connect(og); og.connect(bus); o.start(t); o.stop(t+0.34);
+  const e=noiseSrc(), ef=actx.createBiquadFilter(), eg=actx.createGain();
+  ef.type="lowpass"; ef.frequency.value=700;
+  env(eg,t+0.03,0.16,0.04,0.45);
+  e.connect(ef); ef.connect(eg); eg.connect(bus); startNoise(e,t+0.03,0.47);
+}
+// Ключи — из TYPES: новый класс обязан получить свой звук, иначе он стреляет молча.
+const SHOTS={bouncer:shotBouncer, shooter:shotShooter, undertaker:shotUndertaker, sniper:shotSniper};
+// ЕДИНСТВЕННАЯ точка вызова — fire(). Из рендера звать нельзя: он рисует и на паузе,
+// и по памяти тумана. Возвращает true, если голос действительно прозвучал.
+function sfx(type,x,y){
+  if(!sfxOn || !actx) return false;
+  const synth=SHOTS[type]; if(!synth) return false;
+  if(!canSee("player",x,y)) return false;   // слух не должен видеть сквозь туман
+  const p=sfxPlace(x,y); if(!p) return false;
+  const t=actx.currentTime;
+  if(!sfxSlot(t)) return false;
+  synth(sfxOut(p), t+0.001);
+  return true;
+}
+
+// --- Джаз ---
+// Нуарный луп: восьмитактовый минорный оборот ii–V–i в Dm, свинговые восьмые.
+// Ноты — MIDI; voice — голосование аккорда над басом, tones — из чего ходит бас.
+const BPM=92, BEAT=60/BPM, SWING=0.62;   // доля первой восьмой в доле: 0.5 — ровно, 0.62 — свинг
+const CHORDS=[
+  {root:38, tones:[0,3,7,10,14], voice:[3,7,10,14]},   // Dm7
+  {root:38, tones:[0,3,7,10,14], voice:[3,7,10,14]},
+  {root:43, tones:[0,3,7,10,14], voice:[3,7,10,14]},   // Gm7
+  {root:43, tones:[0,3,7,10,14], voice:[3,7,10,14]},
+  {root:40, tones:[0,3,6,10],    voice:[3,6,10,15]},   // Em7b5
+  {root:45, tones:[0,4,7,10,13], voice:[4,7,10,13]},   // A7b9
+  {root:38, tones:[0,3,7,10,14], voice:[3,7,10,14]},   // Dm7
+  {root:45, tones:[0,4,7,10,13], voice:[4,7,10,13]},   // A7b9
+];
+const SLOTS=8;                    // восьмых в такте
+let musicTimer=null, musicBar=0, musicSlot=0, nextNoteAt=0, musicDucked=false;
+const horn=new Array(SLOTS).fill(0);   // фраза трубы на текущий такт: MIDI или 0
+// Вариативность музыки — на Math.random. Сидированный rnd() принадлежит генератору карты:
+// дёргать его из звука значит менять карту от того, сколько игра успела поиграть.
+function mrand(){ return Math.random(); }
+function mpick(a){ return a[Math.floor(mrand()*a.length)]; }
+
+function noteBass(t,midi){
+  const o=actx.createOscillator(), f=actx.createBiquadFilter(), g=actx.createGain();
+  o.type="triangle"; o.frequency.value=midiHz(midi);
+  f.type="lowpass"; f.frequency.value=420;
+  env(g,t,0.55,0.012,BEAT*0.92);
+  o.connect(f); f.connect(g); g.connect(musicGain); o.start(t); o.stop(t+BEAT);
+}
+function noteChord(t,midis,vel){
+  midis.forEach((m,i)=>{
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.type= i%2 ? "triangle" : "sine";
+    o.frequency.value=midiHz(m);
+    o.detune.value=(i-1)*3;                    // лёгкая расстройка — «живое» пианино
+    env(g,t,vel*0.1,0.015,BEAT*0.8);
+    o.connect(g); g.connect(musicGain); o.start(t); o.stop(t+BEAT);
+  });
+}
+function noteBrush(t,vel){
+  const n=noiseSrc(), f=actx.createBiquadFilter(), g=actx.createGain();
+  f.type="highpass"; f.frequency.value=5200;
+  env(g,t,vel*0.06,0.004,0.07);
+  n.connect(f); f.connect(g); g.connect(musicGain); startNoise(n,t,0.1);
+}
+// Приглушённая труба: две расстроенные пилы под лоупасом и вибрато отдельным LFO.
+function noteHorn(t,midi,dur){
+  const g=actx.createGain(), f=actx.createBiquadFilter();
+  f.type="lowpass"; f.frequency.value=1500;
+  env(g,t,0.12,0.06,dur);
+  f.connect(g); g.connect(musicGain);
+  const lfo=actx.createOscillator(), lg=actx.createGain();
+  lfo.type="sine"; lfo.frequency.value=5.2; lg.gain.value=6;   // ±6 центов
+  lfo.connect(lg);
+  for(let i=0;i<2;i++){
+    const o=actx.createOscillator();
+    o.type="sawtooth"; o.frequency.value=midiHz(midi); o.detune.value=i?7:-7;
+    lg.connect(o.detune);
+    o.connect(f); o.start(t); o.stop(t+dur+0.05);
+  }
+  lfo.start(t); lfo.stop(t+dur+0.05);
+}
+// Бас ходит четвертями: доля 1 — основной тон, доля 4 — хроматический подход к следующему аккорду.
+function bassNote(bar,beat){
+  const c=CHORDS[bar%CHORDS.length], nx=CHORDS[(bar+1)%CHORDS.length];
+  if(beat===0) return c.root;
+  if(beat===3) return nx.root + (nx.root>c.root?-1:1);
+  return c.root + mpick(c.tones);
+}
+// Фраза трубы планируется на такт целиком: 3–5 нот подряд, конец — на тоне аккорда.
+function hornPlan(bar){
+  horn.fill(0);
+  if(mrand()>0.35) return;
+  const c=CHORDS[bar%CHORDS.length];
+  const len=3+Math.floor(mrand()*3), from=Math.floor(mrand()*(SLOTS-len));
+  for(let i=0;i<len;i++){
+    const iv = i===len-1 ? mpick(c.voice) : mpick(c.tones)+mpick([0,12]);
+    horn[from+i]=c.root+12+iv;
+  }
+}
+// Один слот восьмой: что звучит на этой доле. Возвращает число сыгранных нот — по нему
+// тест видит, что музыка идёт (и что выключенная молчит).
+function musicSlotPlay(bar,slot,t){
+  let n=0;
+  const c=CHORDS[bar%CHORDS.length];
+  if(slot===0) hornPlan(bar);
+  if(slot%2===0){ noteBass(t,bassNote(bar,slot/2)); n++; }          // ходячий бас
+  // щётки по тарелке: доли слышно, «и» тише, на 2 и 4 — акцент
+  noteBrush(t, slot%2 ? 0.5 : (slot===2||slot===6 ? 1.1 : 0.8)); n++;
+  // аккорды-компы редкие и синкопированные — фон, а не марш
+  if(mrand() < (slot%2 ? 0.26 : (slot===0?0.4:0.12))){
+    noteChord(t, c.voice.map(iv=>c.root+12+iv), 0.7+mrand()*0.6); n++;
+  }
+  if(horn[slot]){ noteHorn(t,horn[slot],BEAT*(0.5+mrand())); n++; }
+  return n;
+}
+// Планировщик с упреждением: держим ноты на LOOKAHEAD вперёд и досыпаем по таймеру.
+// Именно setInterval, а НЕ rAF: в фоновой вкладке кадры душат, и луп бы рвался.
+// Горизонт в секунду — с запасом на то, что в скрытой вкладке и таймеры душат до 1 с.
+const LOOKAHEAD=1.0, MUSIC_TICK=25;
+function musicTick(){
+  if(!actx || !musicOn) return 0;
+  // Вкладку свернули надолго — таймеры душат вплоть до минуты, и очередь нот отстаёт
+  // от часов контекста. Догонять её нельзя: десятки просроченных нот сыграют разом,
+  // залпом. Подхватываем с текущего момента.
+  if(nextNoteAt < actx.currentTime){
+    nextNoteAt=actx.currentTime+0.05;
+    if(musicSlot){ musicSlot=0; musicBar++; }   // подхватываем со следующего такта, а не с того же
+  }
+  let n=0, guard=0;
+  while(nextNoteAt < actx.currentTime+LOOKAHEAD && guard++<64){
+    n+=musicSlotPlay(musicBar,musicSlot,nextNoteAt);
+    // свинг: первая восьмая доли длиннее второй
+    nextNoteAt += BEAT*(musicSlot%2 ? 1-SWING : SWING);
+    if(++musicSlot>=SLOTS){ musicSlot=0; musicBar++; }
+  }
+  return n;
+}
+function musicStart(){
+  if(!actx || !musicOn || musicTimer) return;
+  const now=actx.currentTime;
+  nextNoteAt=now+0.12; musicSlot=0; musicDucked=false;
+  musicGain.gain.cancelScheduledValues(now);
+  musicGain.gain.setValueAtTime(MUSIC_VOL,now);
+  musicTimer=setInterval(musicTick,MUSIC_TICK);
+  musicTick();
+}
+function musicStop(){
+  if(musicTimer){ clearInterval(musicTimer); musicTimer=null; }
+  if(!actx) return;
+  // ноты уже разложены на LOOKAHEAD вперёд — глушим шину, иначе хвост доиграет
+  const now=actx.currentTime;
+  musicGain.gain.cancelScheduledValues(now);
+  musicGain.gain.setValueAtTime(musicGain.gain.value,now);
+  musicGain.gain.linearRampToValueAtTime(0,now+0.15);
+}
+// Пауза и конец партии джаз приглушают, а не режут: зовётся каждый кадр, работает на смене.
+function audioDuck(quiet){
+  if(!actx || !musicOn || quiet===musicDucked) return;
+  musicDucked=quiet;
+  const now=actx.currentTime, g=musicGain.gain;
+  g.cancelScheduledValues(now);
+  g.setValueAtTime(g.value,now);
+  g.linearRampToValueAtTime(quiet?MUSIC_VOL*0.22:MUSIC_VOL, now+0.4);
+}
+
+// --- Тумблеры: одно состояние, два места показа ---
+function syncAudioUI(){
+  [["optMusic",musicOn],["ovMusic",musicOn],["optSfx",sfxOn],["ovSfx",sfxOn]].forEach(([id,on])=>{
+    const el=document.getElementById(id); if(el) el.checked=on;
+  });
+}
+function setAudio(kind,on,quiet){
+  if(kind==="music"){
+    musicOn=on;
+    if(on){ audioResume(); musicStart(); } else musicStop();
+    if(!quiet) toast(on?"Джаз включён":"Джаз выключен");
+  }else{
+    sfxOn=on;
+    if(on) audioResume();
+    if(!quiet) toast(on?"Звуки боя включены":"Звуки боя выключены");
+  }
+  syncAudioUI();
+}
+// M — общий мьют: гасит всё разом и возвращает ту же комбинацию галок, что была до него.
+let muteSave=null;
+function toggleMute(){
+  if(musicOn||sfxOn){
+    muteSave={m:musicOn,s:sfxOn};
+    setAudio("music",false,true); setAudio("sfx",false,true);
+    toast("Звук выключен — M вернёт");
+  }else{
+    const s=muteSave||{m:true,s:true}; muteSave=null;
+    setAudio("music",s.m,true); setAudio("sfx",s.s,true);
+    toast("Звук включён");
+  }
+}
+[["optMusic","music"],["ovMusic","music"],["optSfx","sfx"],["ovSfx","sfx"]].forEach(([id,kind])=>{
+  const el=document.getElementById(id);
+  if(el) el.onchange=e=>setAudio(kind,!!e.target.checked);
+});
+
 // ---------- Стартовый экран / конец партии ----------
 const over=document.getElementById("over");
 const ovStart=document.getElementById("ovStart"), ovAgain=document.getElementById("ovAgain");
+const ovAudio=document.getElementById("ovAudio");
 function showStart(){
   ended=true; paused=true;
   document.getElementById("ovTitle").textContent="LEGAL CRIME";
   document.getElementById("ovText").textContent=
     "Криминальная FFA: выбери число противников. Каждый воюет за себя — свали чужие штабы и останься последним.";
-  ovStart.style.display="flex"; ovAgain.style.display="none";
+  ovStart.style.display="flex"; ovAgain.style.display="none"; ovAudio.style.display="flex";
+  syncAudioUI();                 // галки старта показывают то же, что галки панели
   over.style.display="grid";
 }
-function startGame(n){ initWorld(n); over.style.display="none";
+function startGame(n){
+  audioResume();                 // клик по кнопке старта — тот самый жест, которого ждёт браузер
+  initWorld(n); over.style.display="none";
   toast("Найм в штабе: 1 2 3 4. Цель — свалить чужие штабы."); }
 function showOver(win){
   document.getElementById("ovTitle").textContent = win?"ГОРОД ТВОЙ":"ШТАБ ПАЛ";
   document.getElementById("ovText").textContent = win
     ? "Ты последний, кто стоит. Город твой. Легально."
     : "Твой штаб захвачен. Империя рухнула.";
-  ovStart.style.display="none"; ovAgain.style.display="inline-block";
+  ovStart.style.display="none"; ovAudio.style.display="none"; ovAgain.style.display="inline-block";
   over.style.display="grid";
 }
 ["1","2","3"].forEach(n=>{ document.getElementById("ovN"+n).onclick=()=>startGame(+n); });
@@ -1975,6 +2317,9 @@ let last=performance.now();
 function loop(now){
   let dt=(now-last)/1000; last=now; dt=Math.min(dt,0.05);
   if(!paused){ update(dt); }
+  // Джаз уходит на задний план на паузе и в конце партии. Стартовый экран (ended, но
+  // outcome ещё null) — не «конец»: там джаз и задаёт настроение, глушить его нечего.
+  audioDuck(ended ? !!outcome : paused);
   if(msgTimer>0){ msgTimer-=dt; if(msgTimer<=0) document.getElementById("msg").style.opacity=0; }
   draw();
   if(paused && !ended){ ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle="rgba(0,0,0,.4)"; ctx.fillRect(0,0,W,H);
