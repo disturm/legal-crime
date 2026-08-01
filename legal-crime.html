@@ -977,6 +977,7 @@ function spawnUnit(type,x,y,team,role){
   const u={id:uid++,type,team,x,y,tx:x,ty:y,hp:t.hp,maxhp:t.hp,cd:0,target:null,order:null,
     range:t.range,dmg:t.dmg,rate:t.rate,speed:t.speed,r:t.r,shape:t.shape,pow:t.pow,sight:t.sight,
     combat:0,                                  // >0 — боец в боевой стойке (сам ведёт бой)
+    repath:0,                                  // таймер перестроения маршрута; 0 — можно строить прямо сейчас
     aim:t.aim||0, aimT:0, aimTgt:null,         // прицеливание: сколько надо держать цель и сколько уже держит
     color:TEAM[team].main, dark:TEAM[team].dark, shot:TEAM[team].shot,
     role:role||"attacker",homeBiz:null};
@@ -1797,8 +1798,13 @@ function moveUnit(u,dt){
   if(passable(Math.floor(nx/TILE),Math.floor(ny/TILE))){
     u.x=Math.max(6,Math.min(WORLD_W-6,nx));
     u.y=Math.max(6,Math.min(WORLD_H-6,ny));
-  }else if(u.path){ u.pi++; }   // застряли — к следующему вейпоинту
-  else { setDest(u,u.tx,u.ty); }
+  }else if(u.path && u.pi<u.path.length-1){ u.pi++; }   // застряли — к следующему вейпоинту
+  // Маршрут исчерпан, а шаг всё равно не проходит: строим заново ИЗ ТЕКУЩЕЙ клетки.
+  // Раньше pi рос без предела при живом u.path, и боец навсегда уходил в режим
+  // «по прямой сквозь дома» (условие выше становилось ложным, gx/gy падали на u.tx/u.ty),
+  // упираясь в угол до нового приказа — и затыкая собой мост или переулок.
+  // Через u.repath: иначе застрявший считал бы полный BFS каждый кадр.
+  else if(u.repath<=0){ u.path=null; setDest(u,u.tx,u.ty); }
 }
 // выталкиваем юнита из стены, если его туда затолкали соседи
 function unstick(u){
@@ -1806,6 +1812,22 @@ function unstick(u){
   const p=nearestPassable(Math.floor(u.x/TILE),Math.floor(u.y/TILE));
   if(p){ u.x=p[0]*TILE+TILE/2; u.y=p[1]*TILE+TILE/2; }
 }
+
+// ---------- Область коллизии ----------
+// r — это то, ЧЕМ БОЙЦА РИСУЮТ (unitPath, стволы, кольцо выделения, скобки стойки,
+// HP-бар), а не то, чем он занимает улицу. Пока это было одно число, колонна не могла
+// разойтись: пара встречных упиралась друг в друга на 20–24 px при ширине клетки 64,
+// и мост в одну клетку работал клапаном на одного.
+// Идущий ужат вдвое, стоящий — только до 0.7: строй у точки и линия огня обязаны
+// читаться как раньше, а протискивается пусть тот, кто идёт.
+const BODY_MOVE=0.5, BODY_STAND=0.7;
+// «На ходу» — это НАЛИЧИЕ МАРШРУТА, а не «далеко ли до цели». Порог по расстоянию
+// замыкается в круг: расталкивание само сбивает бойца с места, вытолкнутый из строя
+// считался бы идущим, ужимался вдвое, строй уплотнялся бы — и так до BODY_MOVE.
+// Ровно того, ради чего взят BODY_STAND, тогда бы и не осталось.
+// Маршрут ставит setDest, снимают его stop() и приход на место, так что отдельного
+// флага не нужно: состояние уже есть в u.path и протухнуть не может.
+function bodyR(u){ return u.r * (u.path ? BODY_MOVE : BODY_STAND); }
 
 function nearestEnemy(u,maxd){
   let best=null,bd=Infinity;
@@ -2044,9 +2066,13 @@ function update(dt){
   captureBusinesses(dt);
 
   // разделение юнитов (чтобы не слипались)
+  // Тело для расталкивания — bodyR, а НЕ u.r, которым бойца рисуют. Считаем его
+  // по разу на бойца, а не на пару: цикл квадратичен, и лишний hypot на пару
+  // здесь дороже, чем массив на кадр.
+  const br=units.map(bodyR);
   for(let i=0;i<units.length;i++){ const a=units[i]; if(a.hp<=0)continue;
     for(let j=i+1;j<units.length;j++){ const b=units[j]; if(b.hp<=0)continue;
-      const dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy),min=a.r+b.r;
+      const dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy),min=br[i]+br[j];
       if(d>0&&d<min){ const p=(min-d)/2/d; a.x-=dx*p;a.y-=dy*p;b.x+=dx*p;b.y+=dy*p; }
     }
   }

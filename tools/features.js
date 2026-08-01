@@ -1911,5 +1911,81 @@ function ok(name, cond, extra) {
   ok("выстрел без звука всё равно наносит урон", e.hp < g.TYPES[e.type].hp, `hp=${e.hp}`);
 }
 
+// ---------- область коллизии: тело для расталкивания — не спрайт ----------
+// u.r рисует бойца (unitPath, стволы, кольцо выделения, HP-бар) и держит клик по нему;
+// расталкивает bodyR. Сведёте обратно в одно число — либо колонна встанет на мосту
+// в одну клетку, либо уедут спрайты, клик (u.r+6) и хитбокс пули (+4).
+{
+  const g = loadGame();
+  g.reset(1, 4242);
+  ok("идущий тоньше стоящего, и оба тоньше спрайта",
+    g.BODY_MOVE < g.BODY_STAND && g.BODY_STAND < 1,
+    `на ходу ${g.BODY_MOVE}, стоя ${g.BODY_STAND}`);
+
+  const u = g.units.find(x => x.team === "player");
+  const R = g.TYPES[u.type].r;
+  g.stop(u);
+  ok("стоящий занимает BODY_STAND от спрайта",
+    Math.abs(g.bodyR(u) - R * g.BODY_STAND) < 1e-9, `${g.bodyR(u)} при спрайте ${R}`);
+  // «на ходу» — это маршрут, а не расстояние до цели: вытолкнутый из строя боец
+  // обязан остаться стоящим, иначе строй у точки схлопнется до BODY_MOVE сам собой
+  u.x += 30;
+  ok("вытолкнутый из строя всё ещё стоящий",
+    Math.abs(g.bodyR(u) - R * g.BODY_STAND) < 1e-9, `${g.bodyR(u)} при спрайте ${R}`);
+  const far = g.businesses.find(b => b.owner === "neutral");
+  g.setDest(u, far.x, far.y);
+  ok("получивший маршрут занимает BODY_MOVE от спрайта",
+    !!u.path && Math.abs(g.bodyR(u) - R * g.BODY_MOVE) < 1e-9, `${g.bodyR(u)} при спрайте ${R}`);
+  ok("а рисуют его по-прежнему по r", u.r === R, `u.r=${u.r}, TYPES=${R}`);
+}
+{
+  // Место чтения — часть правки: рендер и клик обязаны остаться на u.r, иначе
+  // «уменьшили коллизию» молча превратится в «уменьшили персонажей».
+  const html = require("fs").readFileSync(GAME, "utf8");
+  const fn = name => {
+    const m = new RegExp(`function ${name}\\([\\s\\S]*?\\n}`).exec(html);
+    return m ? m[0] : "";
+  };
+  const src = ["drawUnit", "unitPath", "pickUnit"].map(fn);
+  ok("рендер и клик найдены в HTML", src.every(s => s.length > 0));
+  ok("рендер и клик не читают тело для расталкивания",
+    src.every(s => !s.includes("bodyR")));
+}
+{
+  // Двое, вышедших в одной точке, обязаны разойтись — но заметно ближе прежних a.r+b.r.
+  const g = loadGame();
+  g.reset(1, 4242);
+  const sp = g.captureSpots(g.playerHQ())[0];
+  g.units.filter(u => u.team === "player").forEach(u => { u.hp = 0; });
+  g.spawnUnit("bouncer", sp.x, sp.y + 1, "player");
+  g.spawnUnit("bouncer", sp.x, sp.y - 1, "player");
+  for (let i = 0; i < 40; i++) g.update(0.05);
+  const mine = g.units.filter(u => u.team === "player" && u.hp > 0);
+  const R = g.TYPES.bouncer.r;
+  const d = mine.length === 2 ? Math.hypot(mine[0].x - mine[1].x, mine[0].y - mine[1].y) : -1;
+  ok("двое стоящих расходятся, но ближе прежнего",
+    d >= 2 * R * g.BODY_STAND - 1 && d < 2 * R,
+    `${d.toFixed(1)} px, прежде было бы ${2 * R}`);
+}
+{
+  // Затык: шаг упирается в стену, вейпоинты кончились. Раньше u.pi рос без предела
+  // при живом u.path, боец навсегда уходил в «по прямой сквозь дома» и упирался
+  // в угол до нового приказа — затыкая собой мост или переулок остальным.
+  const g = loadGame();
+  g.reset(1, 4242);
+  const u = g.units.find(x => x.team === "player");
+  const far = g.businesses.find(b => b.owner === "neutral");
+  g.setDest(u, far.x, far.y);
+  let over = 0;
+  for (let i = 0; i < 300; i++) {
+    u.pi = u.path ? u.path.length : 0;   // маршрут исчерпан искусственно
+    u.repath = 0;
+    g.moveUnit(u, 0.05);
+    if (u.path && u.pi > u.path.length) over++;
+  }
+  ok("индекс пути не уходит за конец маршрута", over === 0, `нарушений ${over}`);
+  ok("исчерпав маршрут, боец строит его заново, а не давит в угол", !!u.path);
+}
+
 console.log(fails ? `\nПРОВАЛЕНО проверок: ${fails}` : "\nвсе проверки пройдены");
 process.exit(fails ? 1 : 0);
