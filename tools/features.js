@@ -756,7 +756,11 @@ function ok(name, cond, extra) {
   g.units.filter(u => u.team === me).forEach(u => { u.hp = 0; });
   const sp = g.captureSpots(g.factionHQ(me))[0];
   for (let i = 0; i < 4; i++) g.spawnUnit("bouncer", sp.x, sp.y, me);
-  g.funds[me] = 100000;
+  // Касса БЕДНАЯ по меркам BOUNCER_CASH: доля и порог первых тел — послабления для
+  // бедной фракции, и мерить их надо на её деньгах. С кассой на пару стрелков вышибала
+  // не берётся вовсе, и оба теста ниже мерили бы уже не то, что написано в их названии.
+  const poor = g.BOUNCER_CASH - 1;
+  g.funds[me] = poor;
   ok("доля вышибал считается по живым", Math.round(g.bouncerShare(me) * 100) === 100,
     `${Math.round(g.bouncerShare(me) * 100)}%`);
   g.unlocks[me].shooter = true;
@@ -770,14 +774,41 @@ function ok(name, cond, extra) {
   ok("под своей долей вышибала снова нанимается", many.has("bouncer"),
     `доля ${Math.round(g.bouncerShare(me) * 100)}%, выбирал: ` + [...many].join(", "));
 
+  // А вот на деньгах доля больше не спасает: вышибала осмыслен, только пока настоящий
+  // боец не по карману. Армия та же, что и строкой выше (доля под порогом) — разница
+  // ровно в кассе, поэтому тест ловит именно денежные ворота.
+  g.funds[me] = g.BOUNCER_CASH;
+  const rich = new Set();
+  for (let i = 0; i < 60; i++) rich.add(g.aiPickHire(me));
+  ok("с деньгами на пару стрелков вышибал не берут вовсе",
+    !rich.has("bouncer") && rich.has("shooter"),
+    `доля ${Math.round(g.bouncerShare(me) * 100)}% при кассе $${g.BOUNCER_CASH}, выбирал: ` + [...rich].join(", "));
+  ok("порог денег — ровно два стрелка", g.BOUNCER_CASH === g.TYPES.shooter.cost * 2,
+    `$${g.BOUNCER_CASH} при цене стрелка $${g.TYPES.shooter.cost}`);
+
+  // Ворота именно по СТРЕЛКУ: пока он закрыт территорией, тело — единственное, что
+  // фракция вообще может нанять, и богатая фракция без этой оговорки замерла бы.
+  g.unlocks[me].shooter = false;
+  const locked = new Set();
+  for (let i = 0; i < 60; i++) locked.add(g.aiPickHire(me));
+  ok("пока стрелок не открыт территорией, богатая фракция берёт тела", locked.has("bouncer"),
+    "выбирал: " + [...locked].join(", "));
+  g.unlocks[me].shooter = true;
+
   // Первые тела доля не ограничивает: иначе фракция со стартовыми двумя бойцами
   // (один из них вышибала — уже 50%) не смогла бы взять ни одной нейтралки.
   g.units.filter(u => u.team === me).forEach(u => { u.hp = 0; });
   g.spawnUnit("bouncer", sp.x, sp.y, me);
+  g.funds[me] = poor;
   const first = new Set();
   for (let i = 0; i < 20; i++) first.add(g.aiPickHire(me));
   ok("первые тела берутся и сверх доли", g.BOUNCER_MIN > 1 && first.has("bouncer"),
     `порог ${g.BOUNCER_MIN}, при одном вышибале выбирал: ` + [...first].join(", "));
+  g.funds[me] = g.BOUNCER_CASH;
+  const firstRich = new Set();
+  for (let i = 0; i < 40; i++) firstRich.add(g.aiPickHire(me));
+  ok("но и это послабление — для бедных: с деньгами берут стрелка", !firstRich.has("bouncer"),
+    `тел ${g.armyMix(me).all} при кассе $${g.BOUNCER_CASH}, выбирал: ` + [...firstRich].join(", "));
 }
 
 // ---------- подкрепления ИИ оплачиваются из кассы, лимита по территории больше нет ----------

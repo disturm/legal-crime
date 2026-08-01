@@ -46,7 +46,7 @@ const BRIDGE = `
   bizUpkeep, rally, canRally, setRally, rallyPoint, resetRally, playerRally, homeHQ,
   canUpgrade, buyUpgrade, playerUpgrade, aiUpgrade,
   canDemolish, demolish, playerDemolish, aiSwap, AI_SWAP_GAIN,
-  UPKEEP_SHARE, WAVE_MAX, AI_UP_RESERVE, aiCanHire, aiPickHire, BOUNCER_SHARE, BOUNCER_MIN, bouncerShare, armyMix,
+  UPKEEP_SHARE, WAVE_MAX, AI_UP_RESERVE, aiCanHire, aiPickHire, BOUNCER_SHARE, BOUNCER_MIN, BOUNCER_CASH, bouncerShare, armyMix,
   aiGoal, armyCount, RICH_KEYS, RICH_SHARE, SAVE_SEC, ARMY_FIRST,
   get musicOn(){return musicOn}, get sfxOn(){return sfxOn},
   get actx(){return actx},   // в тесте им двигают currentTime: бюджет голосов и планировщик считают по нему
