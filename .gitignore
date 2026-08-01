@@ -41,6 +41,9 @@ coverage/
 !.env.example
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+# рабочие копии git worktree: сами по себе они уже лежат в истории отдельными ветками,
+# и попав в репозиторий вторым экземпляром, дают копию игры внутри игры
+.claude/worktrees/
 # служебная папка vercel link/dev с идентификаторами проекта; сам vercel.json — в репозитории
 .vercel/
 
