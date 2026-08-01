@@ -1631,6 +1631,16 @@ function enemyAI(dt){
       if(!alive(me)) return;                       // выбывшая не нанимает: штаб пал
       const edge=businesses.filter(b=>b.owner===me);
       if(!edge.length) return;                     // земли нет — некому платить бойцам
+      // Нанятый боец выходит В ТОЧКЕ СБОРА — ровно как у игрока (selectBuy): штаб фракции,
+      // а если сбор перехвачен, то тренировочный центр или трофейный штаб. Раньше волна
+      // выходила у СЛУЧАЙНОЙ своей точки, и подкрепление возникало «из ниоткуда» на другом
+      // конце карты — в том числе за спиной у игрока, у только что отбитого заведения.
+      // Ворота найма и правило «обе стороны по одним правилам» этим и держатся:
+      // ИИ теперь тоже платит за доставку расстоянием.
+      const at=rallyPoint(me);
+      if(!at) return;                              // штаба нет — выходить некуда
+      const spot=nearestPassable(at.c,at.r);
+      if(!spot) return;                            // подход к сбору перекрыт
       // ИИ «даёт взятки» по мере роста территории — те же ворота, что и у игрока
       for(const t in AI_BRIBE) if(edge.length>=AI_BRIBE[t]) unlocks[me][t]=true;
       // Попыток вдвое больше, чем бойцов: aiPickHire выбирает класс броском, и его null
@@ -1647,8 +1657,8 @@ function enemyAI(dt){
         // читал бы прошлый расход и фракция набрала бы WAVE_MAX сверх своего бюджета.
         // Следующий tickEconomy всё равно пересчитает fUp с нуля.
         fUp[me]+=TYPES[t].up;
-        const from=edge[Math.floor(Math.random()*edge.length)];
-        spawnUnit(t,from.x+(Math.random()*60-30),from.y+(Math.random()*60-30),me,"attacker");
+        spawnUnit(t, spot[0]*TILE+TILE/2+(Math.random()*20-10),
+                     spot[1]*TILE+TILE/2+(Math.random()*20-10), me,"attacker");
       }
     });
   }

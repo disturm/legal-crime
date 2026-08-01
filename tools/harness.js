@@ -35,7 +35,7 @@ const BRIDGE = `
   get mapSeed(){return mapSeed},
   genMap, buildTerrain, validateTerrain, validateBiz, landComponents, bizSpots, placeBiz,
   distFrom, stepsTo, enemyAI,
-  update, draw, setDest, spawnUnit, passable, findPath,
+  update, draw, setDest, spawnUnit, passable, nearestPassable, findPath,
   hasLOS, reset: initWorld, playerHQ, factionHQ,
   COMBAT_TIME, SNIPER_ENGAGED, aimOff, GAME_SPEED,
   selectBuy, captureSpots, inCapZone, captureBusinesses, fire, commandTo, pickBiz,
