@@ -888,10 +888,25 @@ function bizIncome(b){ return bizIncomeOf(b.owner,b); }
 function bizBaseIncome(b,kind){ if(kind===undefined) kind=b.kind; return kind ? UPGRADES[kind].X : b.income; }
 // Что написано на плитке. У тренировочного центра дохода нет — на плитке его расход,
 // и он такая же статичная цифра «как в прайсе»: сквозь туман ничего не выдаёт.
-function bizTag(b,kind){
+// Второе слагаемое — надбавка за долю рынка: у СВОЕЙ точки настоящая («$24+$20»),
+// у чужой и ничьей — «$?»: доля владельца фогнута вместе с ним самим. Своя надбавка
+// нового канала не открывает — она считается ровно из той доли, что и так написана
+// в строке казны (осознанное исключение про рынок).
+// Типы, чей доход от рынка не зависит (решение проблем, Y=0), слагаемого не получают
+// вовсе: прибавлять там нечего ни своим, ни чужим.
+// kind и owner — ГЛАЗАМИ фракции (память тумана), по умолчанию — факт.
+function bizTag(b,kind,owner){
   if(kind===undefined) kind=b.kind;
+  if(owner===undefined) owner=b.owner;
   const up=bizUpkeep(b,kind);
-  return up ? "−$"+up : "$"+bizBaseIncome(b,kind);
+  if(up) return "−$"+up;
+  const base=bizBaseIncome(b,kind);
+  if(!kind || !UPGRADES[kind].Y) return "$"+base;   // штаб, простая точка, решала
+  if(owner!=="player") return "$"+base+"+$?";
+  // Ноль тоже пишется: «$20+$0» — это не пустая цифра, а видимая причина строить второе
+  // заведение того же типа. Спрятать его значило бы показывать слагаемое через раз.
+  const u=UPGRADES[kind];
+  return "$"+base+"+$"+(Math.round(u.X*(1+u.Y*marketPct(owner,kind)/100))-u.X);
 }
 // Прогноз дохода типа kind, если фракция f построит ещё add штук: им пользуются
 // и ИИ при выборе типа, и бот в симе.
@@ -2769,10 +2784,11 @@ function draw(){
     }
     // маркер-крыша
     ctx.fillStyle=col; ctx.globalAlpha=.9; ctx.fillRect(x+4,y+4,TILE-8,10); ctx.globalAlpha=1;
-    // $ — доход без доли рынка, и по ПОМНИМОМУ типу: цифра статична и потому
-    // ничего не выдаёт сквозь туман — ни живой доли, ни свежей стройки за углом
+    // $ — по ПОМНИМОМУ типу и помнимому владельцу: у своей точки к цене «как в прайсе»
+    // приписана живая надбавка за долю рынка, у чужой — «$?». Чужая доля сквозь туман
+    // не течёт, своя и так стоит в строке казны.
     ctx.fillStyle="#0b0d12"; ctx.font="bold 12px Segoe UI"; ctx.textAlign="center";
-    ctx.fillText(bizTag(b,kindSeen), x+TILE/2, y+13);
+    ctx.fillText(bizTag(b,kindSeen,st.owner), x+TILE/2, y+13);
     // Точка сбора игрока — флажок в углу плитки. Своя точка и своя же механика,
     // фог тут ни при чём: рисуем по факту, а не по памяти.
     if(rallyPoint("player")===b) drawFlag(x+TILE-17, y+20);

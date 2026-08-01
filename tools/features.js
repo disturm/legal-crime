@@ -473,8 +473,11 @@ function ok(name, cond, extra) {
     const scout = g.units[g.units.length - 1];
     g.updateVision(1);
     ok("разведанная точка показывает настоящий тип", g.knownKind("player", b) === "bar");
-    ok("на плитке разведанного бара его цена",
-      g.bizTag(b, g.knownKind("player", b)) === "$" + g.UPGRADES.bar.X);
+    // цена видна, а надбавка за долю рынка у чужого бара — нет: доля владельца фогнута
+    ok("на плитке разведанного чужого бара цена и «$?»",
+      g.bizTag(b, g.knownKind("player", b), g.knownOwner("player", b))
+      === "$" + g.UPGRADES.bar.X + "+$?",
+      g.bizTag(b, g.knownKind("player", b), g.knownOwner("player", b)));
 
     // боец ушёл, а хозяин тем временем перестроил точку — игрок помнит бар
     scout.hp = 0;
@@ -623,9 +626,35 @@ function ok(name, cond, extra) {
   const shown = g.bizBaseIncome(pool[0]);
   pool[0].owner = "ai1";                                            // точку увели
   ok("цифра на плитке не меняется при смене владельца", g.bizBaseIncome(pool[0]) === shown);
+  // ...а вот ВТОРОЕ слагаемое от владельца зависит: своя надбавка — числом, чужая — «$?»
+  ok("у чужой точки надбавка скрыта", g.bizTag(pool[0], "bar", "ai1") === "$" + shown + "+$?",
+    g.bizTag(pool[0], "bar", "ai1"));
+  ok("у ничьей точки надбавка тоже скрыта",
+    g.bizTag(pool[0], "bar", "neutral") === "$" + shown + "+$?");
   pool[0].owner = "player";
+  // 5 своих баров из 12 → 42%: 24 базовых плюс 20 за долю, и сумма равна честному доходу
+  const add = g.bizIncomeOf("player", pool[0]) - shown;
+  ok("у своей точки на плитке база и надбавка за долю",
+    g.bizTag(pool[0], "bar", "player") === "$" + shown + "+$" + add && add === 20,
+    g.bizTag(pool[0], "bar", "player"));
+  // мелкая доля — не повод прятать слагаемое: «+$0» и есть повод строить второе такое же
+  pool.forEach(b => { b.owner = "ai1"; });
+  ok("нулевая надбавка тоже пишется", g.bizTag(pool[0], "bar", "player") === "$" + shown + "+$0",
+    g.bizTag(pool[0], "bar", "player"));
+  pool.forEach((b, i) => { b.owner = i < 5 ? "player" : "ai1"; });
+  // решение проблем от рынка не зависит (Y=0) — прибавлять нечего даже своим
+  const fx = pool[1];
+  fx.kind = "fixer"; fx.owner = "player";
+  ok("у решалы надбавки нет вовсе",
+    g.bizTag(fx, "fixer", "player") === "$" + g.UPGRADES.fixer.X &&
+    g.bizTag(fx, "fixer", "ai1") === "$" + g.UPGRADES.fixer.X,
+    g.bizTag(fx, "fixer", "player"));
+  fx.kind = "bar"; fx.owner = "ai1";
   const plainBiz = g.businesses.find(b => !b.hq && !b.kind);
   ok("у неулучшенной точки на плитке базовый доход", g.bizBaseIncome(plainBiz) === plainBiz.income);
+  ok("у неулучшенной точки надбавки нет", g.bizTag(plainBiz, null, "player") === "$" + plainBiz.income);
+  const hq2 = g.playerHQ();
+  ok("у штаба надбавки нет", g.bizTag(hq2, null, "player") === "$" + hq2.income);
 }
 
 // ---------- ворота улучшения: своя точка, не штаб, один раз, за деньги ----------
